@@ -237,13 +237,19 @@ public final class DeviceInfoCollector {
     // ============================ 4. MEMORY ============================
     private InfoSection memory() {
         InfoSection s = new InfoSection("Memoria RAM");
+        // Read meminfo first so it can back-fill total RAM on API < 16, where
+        // MemoryInfo.totalMem does not exist yet.
+        String meminfo = readFile("/proc/meminfo");
+        long memTotalKb = meminfo != null ? ProcParser.meminfoKb(meminfo, "MemTotal") : -1;
         try {
             ActivityManager am = (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
             ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
             am.getMemoryInfo(mi);
-            s.add("RAM total", Formats.humanBytesDetailed(mi.totalMem));
+            long total = (Build.VERSION.SDK_INT >= 16) ? mi.totalMem
+                    : (memTotalKb > 0 ? memTotalKb * 1024L : -1);
+            s.add("RAM total", Formats.humanBytesDetailed(total));
             s.add("RAM disponible", Formats.humanBytesDetailed(mi.availMem)
-                    + "  (" + Formats.percent(mi.availMem, mi.totalMem) + ")");
+                    + "  (" + (total > 0 ? Formats.percent(mi.availMem, total) : "?") + ")");
             s.add("Umbral memoria baja", Formats.humanBytes(mi.threshold));
             s.add("¿Memoria baja ahora?", mi.lowMemory);
             s.add("Clase de memoria app", am.getMemoryClass() + " MB");
@@ -254,7 +260,6 @@ public final class DeviceInfoCollector {
         } catch (Throwable t) {
             s.add("ActivityManager", "no disponible (" + t + ")");
         }
-        String meminfo = readFile("/proc/meminfo");
         if (meminfo != null) {
             s.add("MemTotal", Formats.kbToHuman(ProcParser.meminfoKb(meminfo, "MemTotal")));
             s.add("MemFree", Formats.kbToHuman(ProcParser.meminfoKb(meminfo, "MemFree")));

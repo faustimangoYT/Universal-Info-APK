@@ -8,11 +8,14 @@ android {
 
     defaultConfig {
         applicationId "com.universal.deviceinfo"
-        // minSdk 16 (Android 4.1 Jelly Bean): installs on essentially every
-        // Android device in real-world use. Every API newer than 16 is called
-        // behind an explicit Build.VERSION.SDK_INT guard, so old devices simply
-        // show fewer fields instead of crashing.
-        minSdk 16
+        // minSdk 14 (Android 4.0 Ice Cream Sandwich): about as low as modern
+        // AGP/aapt2 will build, so the APK installs on essentially every Android
+        // device ever shipped in real-world use. Every API newer than 14 is
+        // called behind an explicit Build.VERSION.SDK_INT guard (and each info
+        // section is wrapped in try/catch), so old devices simply show fewer
+        // fields instead of crashing. Zero native code -> one APK runs on ALL
+        // CPU architectures (arm, arm64, x86, x86_64, ...).
+        minSdk 14
         // targetSdk 29 (Android 10) is deliberate for a SIDELOADED (non–Play
         // Store) app: it keeps legacy external-storage write behaviour on
         // Android <= 10 and keeps full "list all installed packages" visibility

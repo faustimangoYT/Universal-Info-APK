@@ -5,13 +5,16 @@ Al abrirla muestra *toda* la información que Android permite obtener y escribe 
 `.txt` con ese informe completo en la **raíz de los volúmenes secundarios**
 (pendrive / tarjeta SD), reemplazándolo en cada apertura.
 
-- **Compatibilidad:** Android 4.1 (API 16) → Android 15/16. Se instala en TV,
+- **Compatibilidad:** Android 4.0 (API 14) → Android 15/16. Se instala en TV,
   teléfonos, tablets y TV-boxes.
 - **Interfaz TV:** tarjetas navegables con mando (D-pad), foco resaltado, tipografía
   grande y márgenes seguros para overscan. Aparece tanto en el launcher normal como
   en la pantalla de inicio de **Android TV** (`LEANBACK_LAUNCHER`).
-- **Sin dependencias externas** (solo framework de Android) → APK de ~84 KB y máxima
+- **Sin dependencias externas** (solo framework de Android) → APK de ~85 KB y máxima
   compatibilidad, sin AndroidX ni floors de `minSdk`.
+- **Máxima portabilidad:** un único APK universal, **sin código nativo**, así que
+  corre en cualquier arquitectura (ARM, ARM64, x86, x86_64, …) y en cualquier
+  densidad de pantalla. `installLocation=auto` permite instalarlo incluso en la SD.
 
 ## Descargar / Instalar
 
@@ -63,11 +66,16 @@ el resto):
 ## El `.txt` en la raíz del USB/SD (regla 2) — comportamiento honesto por versión
 
 El archivo se llama **`InformacionDispositivo.txt`** y se **reemplaza** en cada
-apertura. Para cada volumen secundario detectado, la app intenta —en orden—:
-**(1)** escribir en la **raíz** directamente, **(2)** vía **root (`su`)** si está
-disponible, **(3)** como respaldo garantizado, la carpeta de la app *en ese mismo
-volumen secundario*. Además hay un botón **"Carpeta USB/SD"** (SAF) para elegir la
-carpeta a mano.
+apertura. El destino es siempre **el disco que NO tiene el sistema operativo** (el
+disco secundario: pendrive o SD). Para cada volumen secundario detectado, la app
+intenta —en orden—: **(1)** escribir en la **raíz** directamente, **(2)** vía
+**root (`su`)** si está disponible, **(3)** como respaldo garantizado, la carpeta de
+la app *en ese mismo disco secundario*. Además hay un botón **"Carpeta USB/SD"**
+(SAF) para elegir la carpeta a mano.
+
+> **Nunca** se vuelca el archivo en el almacenamiento interno (el disco del SO). Si
+> no hay ningún USB/SD conectado, solo se guarda una copia de emergencia en la carpeta
+> interna de la app y la pantalla te avisa para que conectes un disco secundario.
 
 | Escenario | ¿Escribe en la RAÍZ del USB/SD? | Detalle |
 |---|---|---|
@@ -97,7 +105,7 @@ Requiere JDK 17+ y el Android SDK (build-tools 35, platform 35).
 
 | Ajuste | Valor | Motivo |
 |---|---|---|
-| `minSdk` | 16 | Máxima compatibilidad; APIs nuevas usadas tras guardas `SDK_INT`. |
+| `minSdk` | 14 | Máxima compatibilidad; APIs nuevas usadas tras guardas `SDK_INT`. |
 | `targetSdk` | 29 | Mantiene *legacy storage* en Android ≤10 y visibilidad total de apps. |
 | `compileSdk` | 35 | Última plataforma estable. |
 | Dependencias | 0 | Solo framework: APK mínimo y universal. |

@@ -255,7 +255,12 @@ public class MainActivity extends Activity {
     private InfoSection buildSaveResultSection(StorageWriter.Report wr, String safResult) {
         InfoSection s = new InfoSection("Resultado del guardado TXT");
         s.add("Nombre de archivo", StorageWriter.FILE_NAME);
-        s.add("Volumen secundario (USB/SD)", wr.anySecondaryVolume);
+        s.add("Disco secundario (USB/SD) detectado", wr.anySecondaryVolume);
+        s.add("Guardado en el disco secundario", wr.secondaryDiskWritten);
+        s.add("Guardado en la RAÍZ del secundario", wr.wroteToSecondaryRoot);
+        if (wr.onlyInternalFallback) {
+            s.add("Solo copia interna (sin USB/SD)", true);
+        }
         s.add("Acceso root disponible", wr.rootAvailable);
         s.add("¿Se guardó al menos una copia?", wr.anySuccess);
         if (!wr.successPaths.isEmpty()) {
@@ -280,18 +285,22 @@ public class MainActivity extends Activity {
 
     private void showWriteStatus(StorageWriter.Report wr, String safResult) {
         StringBuilder sb = new StringBuilder();
-        if (wr.anySuccess) {
-            sb.append("✓ TXT guardado (").append(wr.successPaths.size()).append(" copia/s). ");
+        if (wr.secondaryDiskWritten) {
+            if (wr.wroteToSecondaryRoot) {
+                sb.append("✓ Guardado en la RAÍZ del disco secundario (USB/SD). ");
+            } else {
+                sb.append("✓ Guardado en el disco secundario (carpeta de la app del USB/SD). ");
+            }
+        } else if (wr.onlyInternalFallback) {
+            sb.append("⚠ No hay USB/SD. Copia interna de emergencia — conectá el disco "
+                    + "secundario y tocá Actualizar. ");
         } else {
-            sb.append("✗ No se pudo guardar el TXT automáticamente. ");
-        }
-        if (!wr.anySecondaryVolume) {
-            sb.append("No hay USB/SD conectado. ");
+            sb.append("✗ No se pudo guardar en el disco secundario. ");
         }
         if (safResult != null) {
             sb.append("SAF ✓. ");
-        } else if (!wr.anySuccess) {
-            sb.append("Probá 'Carpeta USB/SD'.");
+        } else if (wr.anySecondaryVolume && !wr.wroteToSecondaryRoot) {
+            sb.append("Para la raíz exacta: botón 'Carpeta USB/SD'.");
         }
         setStatus(sb.toString());
     }

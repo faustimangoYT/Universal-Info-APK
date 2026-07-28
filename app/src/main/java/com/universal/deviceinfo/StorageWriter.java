@@ -48,7 +48,10 @@ public final class StorageWriter {
     public static final class Report {
         public final List<String> lines = new ArrayList<String>();
         public final List<String> successPaths = new ArrayList<String>();
-        public boolean anySecondaryVolume;
+        public boolean anySecondaryVolume;    // a USB/SD (secondary disk) exists
+        public boolean secondaryDiskWritten;  // wrote at least one copy on it
+        public boolean wroteToSecondaryRoot;  // wrote to its actual root
+        public boolean onlyInternalFallback;  // no secondary -> emergency copy
         public boolean anySuccess;
         public boolean rootAvailable;
     }
@@ -56,27 +59,43 @@ public final class StorageWriter {
     public Report writeEverywhere(String content) {
         Report r = new Report();
         r.rootAvailable = isRootAvailable();
-
         File tmp = writeTemp(content); // used for su copies
 
         List<VolumeInfo> vols = VolumeUtil.list(ctx);
         List<VolumeInfo> secondary = new ArrayList<VolumeInfo>();
         for (VolumeInfo v : vols) {
-            if (!v.primary) {
+            // The target is any disk that is NOT the primary/OS storage:
+            // a removable or otherwise secondary volume (USB / SD).
+            if (!v.primary || v.removable) {
                 secondary.add(v);
             }
         }
         r.anySecondaryVolume = !secondary.isEmpty();
 
-        if (secondary.isEmpty()) {
-            r.lines.add("No se detectó ningún pendrive / tarjeta SD (volumen secundario).");
-            r.lines.add("Se guardará en el almacenamiento accesible como respaldo:");
-            // Fallback: primary external root (best effort) + app dir.
-            writeToVolume(r, firstPrimaryOr(vols), content, tmp, true);
-        } else {
+        if (!secondary.isEmpty()) {
+            // Requirement: the .txt must live on the disk that does NOT hold the
+            // operating system. Write it to EVERY secondary/removable disk found.
             for (VolumeInfo v : secondary) {
-                writeToVolume(r, v, content, tmp, false);
+                writeToSecondary(r, v, content, tmp);
             }
+        } else {
+            // No USB/SD present. Deliberately do NOT dump the file on the internal
+            // shared-storage root (that is the OS disk). Keep only an emergency
+            // app-scoped copy and tell the user to connect a secondary disk.
+            r.onlyInternalFallback = true;
+            File dir = ctx.getExternalFilesDir(null);
+            if (dir == null) {
+                dir = ctx.getFilesDir();
+            }
+            File dest = new File(dir, FILE_NAME);
+            if (tryWrite(dest, content)) {
+                r.anySuccess = true;
+                r.successPaths.add(dest.getAbsolutePath());
+                r.lines.add("⚠ No hay disco secundario (USB/SD) conectado.");
+                r.lines.add("Copia de emergencia en el interno: " + dest.getAbsolutePath());
+            }
+            r.lines.add("➡ Conectá un pendrive o tarjeta SD y tocá 'Actualizar' "
+                    + "para guardar en el disco secundario.");
         }
 
         if (tmp != null) {
@@ -86,43 +105,40 @@ public final class StorageWriter {
         return r;
     }
 
-    private VolumeInfo firstPrimaryOr(List<VolumeInfo> vols) {
-        for (VolumeInfo v : vols) {
-            if (v.primary) {
-                return v;
-            }
-        }
-        return vols.isEmpty() ? null : vols.get(0);
-    }
-
-    /** Attempts, in order, root-direct / su / app-dir for a single volume. */
-    private void writeToVolume(Report r, VolumeInfo v, String content, File tmp, boolean isFallback) {
+    /**
+     * Writes to ONE secondary disk, trying in order: direct root write -> su
+     * (root) -> the app-specific dir on that same secondary disk (guaranteed).
+     * Every success here lands on the secondary disk, never on the OS disk.
+     */
+    private void writeToSecondary(Report r, VolumeInfo v, String content, File tmp) {
         if (v == null) {
             return;
         }
-        String tag = (v.primary ? "PRINCIPAL" : "SECUNDARIO")
+        String tag = "DISCO SECUNDARIO"
                 + (v.label != null ? " " + v.label : "")
                 + " (" + v.root + ")";
 
-        // 1) direct write to the volume root
+        // 1) direct write to the volume ROOT
         if (v.root != null) {
             File dest = new File(v.root, FILE_NAME);
             if (tryWrite(dest, content)) {
                 r.anySuccess = true;
+                r.secondaryDiskWritten = true;
+                r.wroteToSecondaryRoot = true;
                 r.successPaths.add(dest.getAbsolutePath());
                 r.lines.add("✓ RAÍZ  " + tag + "  →  " + dest.getAbsolutePath());
-                // Root-direct succeeded; still also drop a copy in the app dir so
-                // it survives even if the user reformats FAT permissions later.
                 writeAppDirCopy(r, v, content, false);
                 return;
             }
         }
 
-        // 2) root (su) write to the true root
+        // 2) root (su) write to the true ROOT
         if (r.rootAvailable && v.root != null && tmp != null) {
             String dest = v.root + "/" + FILE_NAME;
             if (writeWithSu(tmp, dest)) {
                 r.anySuccess = true;
+                r.secondaryDiskWritten = true;
+                r.wroteToSecondaryRoot = true;
                 r.successPaths.add(dest);
                 r.lines.add("✓ RAÍZ (root) " + tag + "  →  " + dest);
                 writeAppDirCopy(r, v, content, false);
@@ -130,11 +146,12 @@ public final class StorageWriter {
             }
         }
 
-        // 3) guaranteed app-specific dir on the SAME secondary volume
+        // 3) guaranteed app-specific dir ON THE SAME secondary disk
         if (writeAppDirCopy(r, v, content, true)) {
-            r.lines.add("△ La raíz no es escribible en este Android; guardado en la "
-                    + "carpeta de la app DEL MISMO dispositivo secundario (ver arriba). "
-                    + "Para escribir en la raíz exacta usá el botón 'Elegir carpeta USB/SD'.");
+            r.secondaryDiskWritten = true; // still physically on the secondary disk
+            r.lines.add("△ La RAÍZ no es escribible en este Android, pero se guardó "
+                    + "en la carpeta de la app DEL MISMO disco secundario (ruta arriba). "
+                    + "Para la raíz exacta usá el botón 'Carpeta USB/SD'.");
         } else {
             r.lines.add("✗ No se pudo escribir en " + tag);
         }
