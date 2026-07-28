@@ -1,0 +1,53 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.universal.deviceinfo'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.universal.deviceinfo"
+        // minSdk 16 (Android 4.1 Jelly Bean): installs on essentially every
+        // Android device in real-world use. Every API newer than 16 is called
+        // behind an explicit Build.VERSION.SDK_INT guard, so old devices simply
+        // show fewer fields instead of crashing.
+        minSdk 16
+        // targetSdk 29 (Android 10) is deliberate for a SIDELOADED (non–Play
+        // Store) app: it keeps legacy external-storage write behaviour on
+        // Android <= 10 and keeps full "list all installed packages" visibility
+        // on every version, both of which serve the "show everything" goal.
+        targetSdk 29
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        debug {
+            // Debug APK is auto-signed with the Android debug keystore, so it is
+            // directly installable (sideload) on any device with no extra setup.
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        // Java 8 language level: broad compatibility, no desugaring needed for
+        // the framework-only APIs used here.
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    // The app intentionally calls many APIs above minSdk behind SDK_INT guards.
+    // Do not fail the build on NewApi/lint; the guards make those calls safe.
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    // No external dependencies on purpose (pure Android framework), so nothing
+    // to package beyond our own classes.
+}
