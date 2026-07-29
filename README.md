@@ -26,6 +26,16 @@ Al abrirla muestra *toda* la información que Android permite obtener y escribe 
 - Cada push a GitHub también compila el APK por CI (ver *Actions* → artefactos
   `UniversalDeviceInfo-debug`).
 
+### Página de descarga para TV Box
+
+[`download/index.html`](download/index.html) es un **HTML auto-contenido** con el
+APK **embebido** (data URI base64): abrilo en el navegador del TV box y descarga e
+instala el APK con un **botón grande enfocado**, navegable con el control remoto. No
+necesita servidor ni internet. Verificado en navegador real: la descarga produce un
+APK byte-idéntico al original. Para usarlo en la TV, hospedá ese único archivo en
+cualquier URL (Netlify, Vercel, GitHub Pages…) y abrí el enlace en el navegador del
+TV box.
+
 ## Qué información muestra (regla "MÁS = MEJOR")
 
 22 secciones, cada una tolerante a fallos (si un dato no está disponible, sigue con
