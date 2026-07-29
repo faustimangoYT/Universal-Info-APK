@@ -40,9 +40,21 @@ import android.os.StatFs;
 import android.os.SystemClock;
 import android.telephony.TelephonyManager;
 import android.util.DisplayMetrics;
+import android.app.KeyguardManager;
+import android.hardware.display.DisplayManager;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
+import android.location.LocationManager;
+import android.media.MediaDrm;
+import android.net.TrafficStats;
+import android.os.PowerManager;
+import android.os.Vibrator;
+import android.provider.Settings;
 import android.view.Display;
 import android.view.InputDevice;
 import android.view.WindowManager;
+import android.view.accessibility.AccessibilityManager;
+import android.webkit.WebView;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -58,6 +70,7 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
+import java.util.UUID;
 
 /**
  * Collects as much device information as the platform will expose, from
@@ -99,6 +112,18 @@ public final class DeviceInfoCollector {
         add(out, "Propiedades del sistema", 21);
         add(out, "Entorno de ejecución", 22);
         add(out, "Térmico / Temperaturas", 23);
+        add(out, "Seguridad / Root", 24);
+        add(out, "Energía (PowerManager)", 25);
+        add(out, "DRM protegido (Widevine)", 26);
+        add(out, "WiFi (capacidades)", 27);
+        add(out, "Uso de datos (desde el arranque)", 28);
+        add(out, "USB conectado", 29);
+        add(out, "Ubicación (proveedores)", 30);
+        add(out, "Ajustes del sistema", 31);
+        add(out, "Particiones del sistema", 32);
+        add(out, "Pantallas (DisplayManager)", 33);
+        add(out, "Software del sistema", 34);
+        add(out, "Kernel / procesos", 35);
         return out;
     }
 
@@ -141,6 +166,18 @@ public final class DeviceInfoCollector {
             case 21: return sysProps();
             case 22: return runtimeEnv();
             case 23: return thermal();
+            case 24: return security();
+            case 25: return power();
+            case 26: return drm();
+            case 27: return wifiCaps();
+            case 28: return traffic();
+            case 29: return usb();
+            case 30: return location();
+            case 31: return systemSettings();
+            case 32: return partitions();
+            case 33: return displays();
+            case 34: return software();
+            case 35: return kernelProc();
             default: return null;
         }
     }
@@ -886,6 +923,531 @@ public final class DeviceInfoCollector {
         s.add("EXTERNAL_STORAGE", Formats.nn(System.getenv("EXTERNAL_STORAGE")));
         s.add("SECONDARY_STORAGE", Formats.nn(System.getenv("SECONDARY_STORAGE")));
         return s;
+    }
+
+    // ============================ 24. SECURITY / ROOT ============================
+    private InfoSection security() {
+        InfoSection s = new InfoSection("Seguridad / Root");
+        s.add("¿Rooteado (binario su)?", isRooted());
+        s.add("Build tags", Formats.nn(Build.TAGS));
+        s.add("¿test-keys?", Build.TAGS != null && Build.TAGS.contains("test-keys"));
+        s.addIfPresent("Verified boot state", getprop("ro.boot.verifiedbootstate"));
+        s.addIfPresent("Bootloader bloqueado", getprop("ro.boot.flash.locked"));
+        s.addIfPresent("Device state (vbmeta)", getprop("ro.boot.vbmeta.device_state"));
+        s.addIfPresent("ro.debuggable", getprop("ro.debuggable"));
+        s.addIfPresent("ro.secure", getprop("ro.secure"));
+        s.addIfPresent("ADB habilitado", settingsGlobal("adb_enabled"));
+        s.addIfPresent("Opciones de desarrollador", settingsGlobal("development_settings_enabled"));
+        s.addIfPresent("OEM unlock permitido", settingsGlobal("oem_unlock_allowed"));
+        s.addIfPresent("SELinux", selinuxMode());
+        try {
+            KeyguardManager km = (KeyguardManager) ctx.getSystemService(Context.KEYGUARD_SERVICE);
+            if (km != null) {
+                s.add("Keyguard seguro", km.isKeyguardSecure());
+                if (Build.VERSION.SDK_INT >= 23) {
+                    s.add("Bloqueo de dispositivo", km.isDeviceSecure());
+                }
+            }
+        } catch (Throwable ignore) {
+        }
+        if (Build.VERSION.SDK_INT >= 29) {
+            try {
+                android.hardware.biometrics.BiometricManager bm =
+                        (android.hardware.biometrics.BiometricManager)
+                                ctx.getSystemService(Context.BIOMETRIC_SERVICE);
+                if (bm != null) {
+                    s.add("Biometría", biometricStr(bm.canAuthenticate()));
+                }
+            } catch (Throwable ignore) {
+            }
+        }
+        return s;
+    }
+
+    // ============================ 25. POWER ============================
+    private InfoSection power() {
+        InfoSection s = new InfoSection("Energía (PowerManager)");
+        try {
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+            if (pm == null) {
+                s.add("PowerManager", "no disponible");
+                return s;
+            }
+            if (Build.VERSION.SDK_INT >= 20) {
+                s.add("Pantalla interactiva", pm.isInteractive());
+            }
+            if (Build.VERSION.SDK_INT >= 21) {
+                s.add("Ahorro de energía", pm.isPowerSaveMode());
+            }
+            if (Build.VERSION.SDK_INT >= 23) {
+                s.add("Modo Doze (idle)", pm.isDeviceIdleMode());
+                s.add("Ignora optimización de batería",
+                        pm.isIgnoringBatteryOptimizations(ctx.getPackageName()));
+            }
+            if (Build.VERSION.SDK_INT >= 24) {
+                s.add("Sustained performance", pm.isSustainedPerformanceModeSupported());
+            }
+            if (Build.VERSION.SDK_INT >= 29) {
+                s.add("Estado térmico", thermalStatusStr(pm.getCurrentThermalStatus()));
+            }
+        } catch (Throwable t) {
+            s.add("Energía", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 26. DRM ============================
+    private InfoSection drm() {
+        InfoSection s = new InfoSection("DRM protegido (Widevine)");
+        if (Build.VERSION.SDK_INT < 18) {
+            s.add("DRM", "requiere Android 4.3+");
+            return s;
+        }
+        UUID widevine = new UUID(0xEDEF8BA979D64ACEL, 0xA3C827DCD51D21EDL);
+        UUID playready = new UUID(0x9A04F07998404286L, 0xAB92E65BE0885F95L);
+        UUID clearkey = new UUID(0x1077EFECC0B24D02L, 0xACE33C1E52E2FB4BL);
+        boolean wv = false;
+        try {
+            wv = MediaDrm.isCryptoSchemeSupported(widevine);
+            s.add("Widevine soportado", wv);
+            s.add("PlayReady soportado", MediaDrm.isCryptoSchemeSupported(playready));
+            s.add("ClearKey soportado", MediaDrm.isCryptoSchemeSupported(clearkey));
+        } catch (Throwable ignore) {
+        }
+        MediaDrm md = null;
+        try {
+            if (wv) {
+                md = new MediaDrm(widevine);
+                s.addIfPresent("Widevine version", drmProp(md, "version"));
+                s.addIfPresent("Nivel de seguridad", drmProp(md, "securityLevel"));
+                s.addIfPresent("Nivel HDCP", drmProp(md, "hdcpLevel"));
+                s.addIfPresent("Max HDCP", drmProp(md, "maxHdcpLevel"));
+                s.addIfPresent("System ID", drmProp(md, "systemId"));
+                s.addIfPresent("OEM Crypto API", drmProp(md, "oemCryptoApiVersion"));
+                s.addIfPresent("Descripción", drmProp(md, "description"));
+                s.addIfPresent("Algoritmos", drmProp(md, "algorithms"));
+            }
+        } catch (Throwable ignore) {
+        } finally {
+            if (md != null) {
+                try {
+                    if (Build.VERSION.SDK_INT >= 28) {
+                        md.close();
+                    } else {
+                        releaseDrm(md);
+                    }
+                } catch (Throwable ignore) {
+                }
+            }
+        }
+        return s;
+    }
+
+    // ============================ 27. WIFI CAPABILITIES ============================
+    private InfoSection wifiCaps() {
+        InfoSection s = new InfoSection("WiFi (capacidades)");
+        try {
+            WifiManager wm = (WifiManager) ctx.getSystemService(Context.WIFI_SERVICE);
+            if (wm == null) {
+                s.add("WiFi", "no disponible");
+                return s;
+            }
+            if (Build.VERSION.SDK_INT >= 21) {
+                s.add("5 GHz soportado", wm.is5GHzBandSupported());
+                s.add("Wi-Fi Direct (P2P)", wm.isP2pSupported());
+                s.add("RTT (802.11mc)", wm.isDeviceToApRttSupported());
+                s.add("Enhanced power reporting", wm.isEnhancedPowerReportingSupported());
+                s.add("TDLS", wm.isTdlsSupported());
+                s.add("Preferred network offload", wm.isPreferredNetworkOffloadSupported());
+            }
+            if (Build.VERSION.SDK_INT >= 29) {
+                s.add("WPA3-SAE", wm.isWpa3SaeSupported());
+                s.add("WPA3-Enterprise (Suite-B)", wm.isWpa3SuiteBSupported());
+                s.add("Enhanced Open (OWE)", wm.isEnhancedOpenSupported());
+                s.add("Easy Connect (DPP)", wm.isEasyConnectSupported());
+            }
+            if (Build.VERSION.SDK_INT >= 30) {
+                s.add("6 GHz soportado", wm.is6GHzBandSupported());
+                s.add("STA+AP concurrencia", wm.isStaApConcurrencySupported());
+                s.add("Sugerencias de red máx/app", wm.getMaxNumberOfNetworkSuggestionsPerApp());
+                s.add("Nivel de señal máx", wm.getMaxSignalLevel());
+            }
+        } catch (Throwable t) {
+            s.add("WiFi caps", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 28. TRAFFIC ============================
+    private InfoSection traffic() {
+        InfoSection s = new InfoSection("Uso de datos (desde el arranque)");
+        long tr = TrafficStats.getTotalRxBytes();
+        long tt = TrafficStats.getTotalTxBytes();
+        if (tr == TrafficStats.UNSUPPORTED) {
+            s.add("TrafficStats", "no soportado en este dispositivo");
+            return s;
+        }
+        s.add("Total recibido", Formats.humanBytesDetailed(tr));
+        s.add("Total enviado", Formats.humanBytesDetailed(tt));
+        long mr = TrafficStats.getMobileRxBytes();
+        long mt = TrafficStats.getMobileTxBytes();
+        s.add("Móvil recibido", Formats.humanBytesDetailed(mr));
+        s.add("Móvil enviado", Formats.humanBytesDetailed(mt));
+        try {
+            long ur = TrafficStats.getUidRxBytes(Process.myUid());
+            long ut = TrafficStats.getUidTxBytes(Process.myUid());
+            if (ur > 0) {
+                s.add("Esta app recibido", Formats.humanBytes(ur));
+            }
+            if (ut > 0) {
+                s.add("Esta app enviado", Formats.humanBytes(ut));
+            }
+        } catch (Throwable ignore) {
+        }
+        return s;
+    }
+
+    // ============================ 29. USB ============================
+    private InfoSection usb() {
+        InfoSection s = new InfoSection("USB conectado");
+        try {
+            UsbManager um = (UsbManager) ctx.getSystemService(Context.USB_SERVICE);
+            if (um == null) {
+                s.add("USB", "no disponible");
+                return s;
+            }
+            java.util.Collection<UsbDevice> devs = um.getDeviceList().values();
+            s.add("Dispositivos USB", devs.size());
+            for (UsbDevice d : devs) {
+                StringBuilder b = new StringBuilder();
+                b.append("VID:PID: ").append(String.format(Locale.US, "%04X:%04X",
+                        d.getVendorId(), d.getProductId())).append('\n');
+                b.append("Clase: ").append(d.getDeviceClass());
+                if (Build.VERSION.SDK_INT >= 21) {
+                    String mn = d.getManufacturerName();
+                    String pn = d.getProductName();
+                    if (mn != null) {
+                        b.append('\n').append("Fabricante: ").append(mn);
+                    }
+                    if (pn != null) {
+                        b.append('\n').append("Producto: ").append(pn);
+                    }
+                }
+                b.append('\n').append("Interfaces: ").append(d.getInterfaceCount());
+                s.add(Formats.nn(d.getDeviceName()), b.toString());
+            }
+            if (devs.isEmpty()) {
+                s.add("Nota", "No hay dispositivos USB conectados ahora.");
+            }
+        } catch (Throwable t) {
+            s.add("USB", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 30. LOCATION ============================
+    private InfoSection location() {
+        InfoSection s = new InfoSection("Ubicación (proveedores)");
+        try {
+            LocationManager lm = (LocationManager) ctx.getSystemService(Context.LOCATION_SERVICE);
+            if (lm == null) {
+                s.add("Ubicación", "no disponible");
+                return s;
+            }
+            if (Build.VERSION.SDK_INT >= 28) {
+                s.add("Ubicación habilitada", lm.isLocationEnabled());
+            }
+            try { s.add("GPS habilitado", lm.isProviderEnabled(LocationManager.GPS_PROVIDER)); } catch (Throwable ig) { }
+            try { s.add("Red habilitado", lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)); } catch (Throwable ig) { }
+            s.add("Todos los proveedores", join(lm.getAllProviders()));
+            s.add("Proveedores activos", join(lm.getProviders(true)));
+            if (Build.VERSION.SDK_INT >= 28) {
+                s.addIfPresent("Modelo GNSS", lm.getGnssHardwareModelName());
+                int yr = lm.getGnssYearOfHardware();
+                if (yr > 0) {
+                    s.add("Año del hardware GNSS", yr);
+                }
+            }
+        } catch (Throwable t) {
+            s.add("Ubicación", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 31. SYSTEM SETTINGS ============================
+    private InfoSection systemSettings() {
+        InfoSection s = new InfoSection("Ajustes del sistema");
+        s.addIfPresent("Android ID", settingsSecure("android_id"));
+        s.addIfPresent("Nombre del dispositivo", settingsGlobal("device_name"));
+        s.addIfPresent("Brillo de pantalla", settingsSystem("screen_brightness"));
+        s.addIfPresent("Brillo automático", settingsSystem("screen_brightness_mode"));
+        s.addIfPresent("Timeout de pantalla (ms)", settingsSystem("screen_off_timeout"));
+        s.addIfPresent("Rotación automática", settingsSystem("accelerometer_rotation"));
+        s.addIfPresent("Escala de fuente", settingsSystem("font_scale"));
+        s.addIfPresent("Modo avión", settingsGlobal("airplane_mode_on"));
+        s.addIfPresent("Auto hora", settingsGlobal("auto_time"));
+        s.addIfPresent("Auto zona horaria", settingsGlobal("auto_time_zone"));
+        s.addIfPresent("Datos móviles", settingsGlobal("mobile_data"));
+        s.addIfPresent("Wi-Fi (estado guardado)", settingsGlobal("wifi_on"));
+        s.addIfPresent("Boot count", settingsGlobal("boot_count"));
+        s.addIfPresent("Private DNS modo", settingsGlobal("private_dns_mode"));
+        s.addIfPresent("Private DNS host", settingsGlobal("private_dns_specifier"));
+        s.addIfPresent("Método de entrada", settingsSecure("default_input_method"));
+        s.addIfPresent("Servicios de accesibilidad", settingsSecure("enabled_accessibility_services"));
+        return s;
+    }
+
+    // ============================ 32. PARTITIONS ============================
+    private InfoSection partitions() {
+        InfoSection s = new InfoSection("Particiones del sistema");
+        if (Build.VERSION.SDK_INT >= 29) {
+            try {
+                for (Build.Partition p : Build.getFingerprintedPartitions()) {
+                    s.add(Formats.nn(p.getName()),
+                            "fingerprint: " + Formats.nn(p.getFingerprint())
+                                    + "\nbuild: " + new Date(p.getBuildTimeMillis()));
+                }
+            } catch (Throwable t) {
+                s.add("Particiones", "no disponible (" + t + ")");
+            }
+        }
+        if (s.isEmpty()) {
+            s.addIfPresent("system", getprop("ro.system.build.fingerprint"));
+            s.addIfPresent("vendor", getprop("ro.vendor.build.fingerprint"));
+            s.addIfPresent("product", getprop("ro.product.build.fingerprint"));
+            s.addIfPresent("boot", getprop("ro.bootimage.build.fingerprint"));
+            if (s.isEmpty()) {
+                s.add("Particiones", "requiere Android 10+ o getprop");
+            }
+        }
+        return s;
+    }
+
+    // ============================ 33. DISPLAYS ============================
+    private InfoSection displays() {
+        InfoSection s = new InfoSection("Pantallas (DisplayManager)");
+        if (Build.VERSION.SDK_INT < 17) {
+            s.add("Pantallas", "requiere Android 4.2+");
+            return s;
+        }
+        try {
+            DisplayManager dm = (DisplayManager) ctx.getSystemService(Context.DISPLAY_SERVICE);
+            if (dm == null) {
+                s.add("DisplayManager", "no disponible");
+                return s;
+            }
+            Display[] ds = dm.getDisplays();
+            s.add("Número de pantallas", ds.length);
+            for (Display d : ds) {
+                StringBuilder b = new StringBuilder();
+                b.append("ID: ").append(d.getDisplayId()).append('\n');
+                DisplayMetrics dmx = new DisplayMetrics();
+                d.getRealMetrics(dmx);
+                b.append("Resolución: ").append(dmx.widthPixels).append("x").append(dmx.heightPixels)
+                        .append(" @ ").append(dmx.densityDpi).append("dpi\n");
+                b.append("Refresco: ").append(String.format(Locale.US, "%.1f Hz", d.getRefreshRate()));
+                if (Build.VERSION.SDK_INT >= 26) {
+                    b.append('\n').append("HDR: ").append(d.isHdr() ? "sí" : "no");
+                    b.append('\n').append("Wide color gamut: ").append(d.isWideColorGamut() ? "sí" : "no");
+                }
+                s.add(Formats.nn(d.getName()), b.toString());
+            }
+        } catch (Throwable t) {
+            s.add("Pantallas", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 34. SOFTWARE ============================
+    private InfoSection software() {
+        InfoSection s = new InfoSection("Software del sistema");
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                android.content.pm.PackageInfo wv = WebView.getCurrentWebViewPackage();
+                if (wv != null) {
+                    s.add("WebView", wv.packageName + " " + wv.versionName);
+                }
+            } catch (Throwable ignore) {
+            }
+        }
+        s.addIfPresent("Google Play Services", pkgVersion("com.google.android.gms"));
+        s.addIfPresent("Google Play Store", pkgVersion("com.android.vending"));
+        try {
+            Vibrator vb = (Vibrator) ctx.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vb != null) {
+                s.add("Vibrador", vb.hasVibrator());
+                if (Build.VERSION.SDK_INT >= 26) {
+                    s.add("Control de amplitud", vb.hasAmplitudeControl());
+                }
+            }
+        } catch (Throwable ignore) {
+        }
+        try {
+            android.nfc.NfcManager nm = (android.nfc.NfcManager) ctx.getSystemService(Context.NFC_SERVICE);
+            android.nfc.NfcAdapter na = (nm != null) ? nm.getDefaultAdapter() : null;
+            s.add("NFC", na != null ? (na.isEnabled() ? "habilitado" : "presente, apagado") : "no soportado");
+        } catch (Throwable ignore) {
+        }
+        try {
+            AccessibilityManager am = (AccessibilityManager) ctx.getSystemService(Context.ACCESSIBILITY_SERVICE);
+            if (am != null) {
+                s.add("Accesibilidad activa", am.isEnabled());
+                s.add("Exploración táctil", am.isTouchExplorationEnabled());
+            }
+        } catch (Throwable ignore) {
+        }
+        try {
+            PackageInfo self = ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0);
+            s.add("App instalada (primera vez)", new Date(self.firstInstallTime).toString());
+            s.add("App actualizada", new Date(self.lastUpdateTime).toString());
+        } catch (Throwable ignore) {
+        }
+        return s;
+    }
+
+    // ============================ 35. KERNEL / PROC ============================
+    private InfoSection kernelProc() {
+        InfoSection s = new InfoSection("Kernel / procesos");
+        s.addIfPresent("Kernel (os.version)", System.getProperty("os.version"));
+        String ver = readFile("/proc/version");
+        if (ver != null) {
+            s.add("/proc/version", ver.trim());
+        }
+        s.addIfPresent("Hostname", trim(readFile("/proc/sys/kernel/hostname")));
+        s.addIfPresent("SELinux", selinuxMode());
+        String up = trim(readFile("/proc/uptime"));
+        if (up != null) {
+            try {
+                double secs = Double.parseDouble(up.split("\\s+")[0]);
+                s.add("Uptime", humanMillis((long) (secs * 1000)));
+            } catch (Throwable ig) {
+            }
+        }
+        s.addIfPresent("Load average", trim(readFile("/proc/loadavg")));
+        s.addIfPresent("CPU online", trim(readFile("/sys/devices/system/cpu/online")));
+        s.addIfPresent("CPU present", trim(readFile("/sys/devices/system/cpu/present")));
+        s.addIfPresent("CPU possible", trim(readFile("/sys/devices/system/cpu/possible")));
+        s.add("Procesadores (runtime)", Runtime.getRuntime().availableProcessors());
+        s.add("Threads activos (app)", Thread.activeCount());
+        s.addIfPresent("Boot ID", trim(readFile("/proc/sys/kernel/random/boot_id")));
+        return s;
+    }
+
+    // ---- helpers for the extended sections ----
+
+    private boolean isRooted() {
+        String[] paths = {"/system/bin/su", "/system/xbin/su", "/sbin/su", "/su/bin/su",
+                "/system/app/Superuser.apk", "/data/local/xbin/su", "/data/local/bin/su",
+                "/system/sd/xbin/su", "/system/bin/failsafe/su", "/data/local/su",
+                "/vendor/bin/su", "/system/xbin/busybox"};
+        for (String p : paths) {
+            try {
+                if (new File(p).exists()) {
+                    return true;
+                }
+            } catch (Throwable ignore) {
+            }
+        }
+        return Build.TAGS != null && Build.TAGS.contains("test-keys");
+    }
+
+    private String getprop(String key) {
+        String v = exec("getprop", key);
+        if (v == null) {
+            return null;
+        }
+        v = v.trim();
+        return v.isEmpty() ? null : v;
+    }
+
+    private String settingsGlobal(String key) {
+        try {
+            if (Build.VERSION.SDK_INT >= 17) {
+                return Settings.Global.getString(ctx.getContentResolver(), key);
+            }
+        } catch (Throwable ignore) {
+        }
+        try {
+            return Settings.System.getString(ctx.getContentResolver(), key);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private String settingsSecure(String key) {
+        try {
+            return Settings.Secure.getString(ctx.getContentResolver(), key);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private String settingsSystem(String key) {
+        try {
+            return Settings.System.getString(ctx.getContentResolver(), key);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private String selinuxMode() {
+        String e = trim(readFile("/sys/fs/selinux/enforce"));
+        if ("1".equals(e)) {
+            return "Enforcing";
+        }
+        if ("0".equals(e)) {
+            return "Permissive";
+        }
+        return getprop("ro.boot.selinux");
+    }
+
+    private String pkgVersion(String pkg) {
+        try {
+            return ctx.getPackageManager().getPackageInfo(pkg, 0).versionName;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static String drmProp(MediaDrm md, String key) {
+        try {
+            return md.getPropertyString(key);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void releaseDrm(MediaDrm md) {
+        md.release();
+    }
+
+    private static String biometricStr(int r) {
+        switch (r) {
+            case android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS:
+                return "disponible y configurada";
+            case android.hardware.biometrics.BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE:
+                return "sin hardware";
+            case android.hardware.biometrics.BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE:
+                return "hardware no disponible";
+            case android.hardware.biometrics.BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED:
+                return "hardware presente, sin datos configurados";
+            default:
+                return "código " + r;
+        }
+    }
+
+    private static String thermalStatusStr(int st) {
+        switch (st) {
+            case PowerManager.THERMAL_STATUS_NONE: return "normal";
+            case PowerManager.THERMAL_STATUS_LIGHT: return "leve";
+            case PowerManager.THERMAL_STATUS_MODERATE: return "moderado";
+            case PowerManager.THERMAL_STATUS_SEVERE: return "severo";
+            case PowerManager.THERMAL_STATUS_CRITICAL: return "crítico";
+            case PowerManager.THERMAL_STATUS_EMERGENCY: return "emergencia";
+            case PowerManager.THERMAL_STATUS_SHUTDOWN: return "apagado inminente";
+            default: return "código " + st;
+        }
     }
 
     // ============================ HELPERS ============================
