@@ -213,6 +213,7 @@ public class MainActivity extends Activity {
                     @Override
                     public void run() {
                         render(finalSections, finalWr, safResult);
+                        toastSaved(finalWr);
                         busy = false;
                     }
                 });
@@ -232,7 +233,7 @@ public class MainActivity extends Activity {
                 final StorageWriter.Report wr = writer.writeEverywhere(lastReport);
                 final String saf = trySavedSaf(lastReport);
                 runOnUiThread(new Runnable() {
-                    @Override public void run() { showWriteStatus(wr, saf); }
+                    @Override public void run() { showWriteStatus(wr, saf); toastSaved(wr); }
                 });
             }
         }, "resave").start();
@@ -253,22 +254,28 @@ public class MainActivity extends Activity {
     }
 
     private InfoSection buildSaveResultSection(StorageWriter.Report wr, String safResult) {
-        InfoSection s = new InfoSection("Resultado del guardado TXT");
+        InfoSection s = new InfoSection("¿Dónde se guardó el TXT?");
+        if (wr.primarySavedPath != null) {
+            s.add("Archivo guardado en", wr.primarySavedPath);
+            int slash = wr.primarySavedPath.lastIndexOf('/');
+            if (slash > 0) {
+                s.add("Carpeta", wr.primarySavedPath.substring(0, slash));
+            }
+        } else {
+            s.add("Archivo guardado en", "no se pudo guardar");
+        }
         s.add("Nombre de archivo", StorageWriter.FILE_NAME);
         s.add("Disco secundario (USB/SD) detectado", wr.anySecondaryVolume);
         s.add("Guardado en el disco secundario", wr.secondaryDiskWritten);
-        s.add("Guardado en la RAÍZ del secundario", wr.wroteToSecondaryRoot);
         if (wr.onlyInternalFallback) {
             s.add("Solo copia interna (sin USB/SD)", true);
         }
-        s.add("Acceso root disponible", wr.rootAvailable);
-        s.add("¿Se guardó al menos una copia?", wr.anySuccess);
-        if (!wr.successPaths.isEmpty()) {
+        if (wr.successPaths.size() > 1) {
             StringBuilder b = new StringBuilder();
             for (String p : wr.successPaths) {
                 b.append(p).append('\n');
             }
-            s.add("Rutas escritas", b.toString().trim());
+            s.add("Todas las rutas escritas", b.toString().trim());
         }
         if (!wr.lines.isEmpty()) {
             StringBuilder b = new StringBuilder();
@@ -285,24 +292,30 @@ public class MainActivity extends Activity {
 
     private void showWriteStatus(StorageWriter.Report wr, String safResult) {
         StringBuilder sb = new StringBuilder();
-        if (wr.secondaryDiskWritten) {
-            if (wr.wroteToSecondaryRoot) {
-                sb.append("✓ Guardado en la RAÍZ del disco secundario (USB/SD). ");
-            } else {
-                sb.append("✓ Guardado en el disco secundario (carpeta de la app del USB/SD). ");
-            }
+        if (wr.secondaryDiskWritten && wr.primarySavedPath != null) {
+            sb.append("✓ Guardado en el disco secundario:\n").append(wr.primarySavedPath);
         } else if (wr.onlyInternalFallback) {
-            sb.append("⚠ No hay USB/SD. Copia interna de emergencia — conectá el disco "
-                    + "secundario y tocá Actualizar. ");
+            sb.append("⚠ No hay USB/SD conectado. Copia interna de emergencia");
+            if (wr.primarySavedPath != null) {
+                sb.append(":\n").append(wr.primarySavedPath);
+            }
+            sb.append("\nConectá el disco secundario y tocá Actualizar.");
         } else {
-            sb.append("✗ No se pudo guardar en el disco secundario. ");
+            sb.append("✗ No se pudo guardar en el disco secundario.");
         }
         if (safResult != null) {
-            sb.append("SAF ✓. ");
-        } else if (wr.anySecondaryVolume && !wr.wroteToSecondaryRoot) {
-            sb.append("Para la raíz exacta: botón 'Carpeta USB/SD'.");
+            sb.append("\nSAF ✓: ").append(safResult);
         }
         setStatus(sb.toString());
+    }
+
+    /** Toast announcing exactly where the file landed, shown on open/refresh. */
+    private void toastSaved(StorageWriter.Report wr) {
+        if (wr.primarySavedPath != null) {
+            toast("TXT guardado en:\n" + wr.primarySavedPath);
+        } else {
+            toast("No se pudo guardar el TXT. Conectá un USB/SD y tocá Actualizar.");
+        }
     }
 
     private void setStatus(final String text) {

@@ -66,16 +66,24 @@ el resto):
 ## El `.txt` en la raíz del USB/SD (regla 2) — comportamiento honesto por versión
 
 El archivo se llama **`InformacionDispositivo.txt`** y se **reemplaza** en cada
-apertura. El destino es siempre **el disco que NO tiene el sistema operativo** (el
-disco secundario: pendrive o SD). Para cada volumen secundario detectado, la app
-intenta —en orden—: **(1)** escribir en la **raíz** directamente, **(2)** vía
-**root (`su`)** si está disponible, **(3)** como respaldo garantizado, la carpeta de
-la app *en ese mismo disco secundario*. Además hay un botón **"Carpeta USB/SD"**
-(SAF) para elegir la carpeta a mano.
+apertura, dentro de una carpeta **`UniversalDeviceInfo/`**. El destino es siempre
+**el disco que NO tiene el sistema operativo** (el disco secundario: pendrive o SD).
+No apunta a la raíz exacta, sino a la **carpeta escribible más cercana a la raíz**:
+la app recorre las carpetas desde la raíz hacia adentro y usa la primera donde
+realmente puede escribir. **Al abrir, la app dice la ruta exacta** donde guardó (en
+la primera tarjeta, en la línea de estado y en un aviso emergente). También hay un
+botón **"Carpeta USB/SD"** (SAF) para elegir la carpeta a mano.
 
-> **Nunca** se vuelca el archivo en el almacenamiento interno (el disco del SO). Si
-> no hay ningún USB/SD conectado, solo se guarda una copia de emergencia en la carpeta
-> interna de la app y la pantalla te avisa para que conectes un disco secundario.
+| Escenario | Carpeta usada (lo más cerca de la raíz posible) |
+|---|---|
+| **Android ≤ 10** / rooted / ROM permisiva | `…/UniversalDeviceInfo/` **pegado a la raíz** del USB/SD (nivel 1). |
+| **Android 11+ de fábrica** | `…/Android/data/<app>/…/UniversalDeviceInfo/` en el **mismo** USB/SD (lo más cerca que permite el SO), o la raíz exacta con el botón *Carpeta USB/SD* (SAF). |
+| **Sin USB/SD conectado** | copia interna de emergencia + aviso en pantalla para conectar un disco secundario. |
+
+> **Nunca** se vuelca el archivo en la raíz del almacenamiento interno (el disco del
+> SO). Escribir en la raíz *exacta* de un medio extraíble en Android 11+ no lo permite
+> el sistema a ninguna app sin SAF/root: por eso la app usa la carpeta escribible más
+> cercana a la raíz y te muestra dónde quedó.
 
 | Escenario | ¿Escribe en la RAÍZ del USB/SD? | Detalle |
 |---|---|---|
