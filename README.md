@@ -28,13 +28,18 @@ Al abrirla muestra *toda* la información que Android permite obtener y escribe 
 
 ### Página de descarga para TV Box
 
-[`download/index.html`](download/index.html) es un **HTML auto-contenido** con el
-APK **embebido** (data URI base64): abrilo en el navegador del TV box y descarga e
-instala el APK con un **botón grande enfocado**, navegable con el control remoto. No
-necesita servidor ni internet. Verificado en navegador real: la descarga produce un
-APK byte-idéntico al original. Para usarlo en la TV, hospedá ese único archivo en
-cualquier URL (Netlify, Vercel, GitHub Pages…) y abrí el enlace en el navegador del
-TV box.
+[`download/index.html`](download/index.html) es una **página de descarga estilo ficha
+de tienda** (layout tipo Google Play, tipografía Roboto, icono, capturas y "Acerca de
+esta app"), **auto-contenida**: el APK, la fuente y las imágenes van **embebidos**
+(data URI base64), así que no necesita servidor ni internet. El botón verde
+**"Instalar"** queda enfocado para navegar con el control remoto y descarga el APK
+(también intenta arrancar la descarga sola al abrir). Verificado en navegador real:
+renderiza con Roboto y la descarga produce un APK **byte-idéntico** al original. Para
+usarla en la TV, hospedá ese único archivo en cualquier URL (Netlify, Vercel, GitHub
+Pages…) y abrí el enlace en el navegador del TV box.
+
+> Es un homenaje visual al estilo de ficha de tienda para **tu propia app**; no usa la
+> marca ni el logo de Google Play ni afirma ser la tienda oficial.
 
 ## Qué información muestra (regla "MÁS = MEJOR")
 
