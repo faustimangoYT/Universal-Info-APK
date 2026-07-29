@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base theme: no title/action bar, dark window. Parent is available on
-         every API level (since API 1) so the app themes identically from
-         Android 4.1 upward. -->
-    <style name="AppTheme" parent="@android:style/Theme.NoTitleBar">
+    <!-- Light theme, no action bar. DeviceDefault.Light gives modern light
+         widgets (Material on newer devices) and exists since API 14. -->
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:colorBackground">@color/bg</item>
     </style>

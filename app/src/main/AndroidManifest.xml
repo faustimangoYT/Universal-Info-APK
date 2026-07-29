@@ -57,5 +57,14 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Serves the generated .txt as a content:// URI so it can be shared
+             to any app (email, Drive, WhatsApp, ...). Custom provider = no
+             AndroidX dependency. -->
+        <provider
+            android:name=".ShareTxtProvider"
+            android:authorities="com.universal.deviceinfo.files"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

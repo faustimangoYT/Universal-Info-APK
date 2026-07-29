@@ -98,6 +98,7 @@ public final class DeviceInfoCollector {
         add(out, "Idioma / Región / Hora", 20);
         add(out, "Propiedades del sistema", 21);
         add(out, "Entorno de ejecución", 22);
+        add(out, "Térmico / Temperaturas", 23);
         return out;
     }
 
@@ -139,6 +140,7 @@ public final class DeviceInfoCollector {
             case 20: return localeTime();
             case 21: return sysProps();
             case 22: return runtimeEnv();
+            case 23: return thermal();
             default: return null;
         }
     }
@@ -231,7 +233,67 @@ public final class DeviceInfoCollector {
         s.add("Frecuencia mín/máx", cpuFreqRange());
         s.add("Governor actual", Formats.nn(trim(readFile(
                 "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"))));
+        s.addIfPresent("Frecuencias por núcleo", perCoreFreqs());
         return s;
+    }
+
+    // ============================ 23. THERMAL ============================
+    private InfoSection thermal() {
+        InfoSection s = new InfoSection("Térmico / Temperaturas");
+        int n = 0;
+        try {
+            File[] zones = new File("/sys/class/thermal/").listFiles();
+            if (zones != null) {
+                for (File z : zones) {
+                    if (!z.getName().startsWith("thermal_zone")) {
+                        continue;
+                    }
+                    String temp = trim(readFile(z.getAbsolutePath() + "/temp"));
+                    if (temp == null) {
+                        continue;
+                    }
+                    long t = parseLong(temp);
+                    if (t < 0) {
+                        continue;
+                    }
+                    String type = trim(readFile(z.getAbsolutePath() + "/type"));
+                    // Values are usually in milli-Celsius.
+                    String tc = (t > 1000)
+                            ? String.format(Locale.US, "%.1f °C", t / 1000.0)
+                            : (t + " (crudo)");
+                    s.add(z.getName() + (type != null ? " (" + type + ")" : ""), tc);
+                    n++;
+                }
+            }
+        } catch (Throwable t) {
+            s.add("Térmico", "no disponible (" + t + ")");
+        }
+        if (n == 0 && s.isEmpty()) {
+            s.add("Sensores térmicos", "no accesibles en este dispositivo");
+        }
+        return s;
+    }
+
+    private String perCoreFreqs() {
+        int cores = countCpuCores();
+        if (cores <= 0) {
+            return null;
+        }
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < cores; i++) {
+            String base = "/sys/devices/system/cpu/cpu" + i + "/cpufreq/";
+            String mx = trim(readFile(base + "cpuinfo_max_freq"));
+            String cur = trim(readFile(base + "scaling_cur_freq"));
+            if (mx == null && cur == null) {
+                continue;
+            }
+            b.append("cpu").append(i).append(": ");
+            if (cur != null) {
+                b.append(Formats.khzToHuman(parseLong(cur))).append(" / ");
+            }
+            b.append("máx ").append(mx != null ? Formats.khzToHuman(parseLong(mx)) : "?").append('\n');
+        }
+        return b.length() == 0 ? null : b.toString().trim();
     }
 
     // ============================ 4. MEMORY ============================

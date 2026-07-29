@@ -7,9 +7,16 @@ Al abrirla muestra *toda* la información que Android permite obtener y escribe 
 
 - **Compatibilidad:** Android 4.0 (API 14) → Android 15/16. Se instala en TV,
   teléfonos, tablets y TV-boxes.
-- **Interfaz TV:** tarjetas navegables con mando (D-pad), foco resaltado, tipografía
-  grande y márgenes seguros para overscan. Aparece tanto en el launcher normal como
-  en la pantalla de inicio de **Android TV** (`LEANBACK_LAUNCHER`).
+- **Interfaz (v1.1):** tema claro (fondo blanco, texto negro, fuente Roboto del
+  sistema), con **categorías** (Básico, Todo, CPU, RAM, GPU, Red/WiFi, Pantalla,
+  Batería, Almacenamiento, Sensores, Sistema) y un **buscador** para filtrar
+  cualquier dato. Elementos enfocables para el mando (D-pad); aparece en el launcher
+  normal y en el de **Android TV** (`LEANBACK_LAUNCHER`).
+- **Compartir TXT:** botón que envía el informe por correo, Drive, WhatsApp o
+  cualquier app (vía `ACTION_SEND` + un `ContentProvider` propio, sin AndroidX).
+- **Guardado:** el `.txt` se crea al abrir en
+  `Android/data/…/faustimango_YT/UniversalDeviceInfo/` y, además, en el disco
+  secundario (USB/SD) si hay uno.
 - **Sin dependencias externas** (solo framework de Android) → APK de ~85 KB y máxima
   compatibilidad, sin AndroidX ni floors de `minSdk`.
 - **Máxima portabilidad:** un único APK universal, **sin código nativo**, así que

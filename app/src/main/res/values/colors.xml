@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#0B1020</color>
-    <color name="card">#16203A</color>
-    <color name="stroke">#2A3B63</color>
-    <color name="accent">#34E0C4</color>
-    <color name="accent2">#6EA8FE</color>
-    <color name="text">#F2F6FF</color>
-    <color name="muted">#93A4C6</color>
+    <!-- Light theme: white background, near-black text (Roboto is the Android
+         system font, matching the download page). -->
+    <color name="bg">#FFFFFF</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="text">#202124</color>
+    <color name="muted">#5F6368</color>
+    <color name="accent">#01875F</color>
+    <color name="accentDark">#016B4B</color>
+    <color name="line">#DADCE0</color>
+    <color name="chipbg">#F1F3F4</color>
+    <color name="statusbar">#01875F</color>
 </resources>

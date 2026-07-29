@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- On Android 5.0+ also tint the system bars to match the dark UI. -->
-    <style name="AppTheme" parent="@android:style/Theme.NoTitleBar">
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:colorBackground">@color/bg</item>
-        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:statusBarColor">@color/statusbar</item>
         <item name="android:navigationBarColor">@color/bg</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>

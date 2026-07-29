@@ -35,8 +35,8 @@ public final class StorageWriter {
 
     /** Fixed name so each run REPLACES the previous file, as required. */
     public static final String FILE_NAME = "InformacionDispositivo.txt";
-    /** Folder created on the secondary disk to hold the report. */
-    public static final String APP_FOLDER = "UniversalDeviceInfo";
+    /** Nested folder created to hold the report (faustimango_YT/UniversalDeviceInfo). */
+    public static final String APP_FOLDER = "faustimango_YT/UniversalDeviceInfo";
 
     private final Context ctx;
 
@@ -50,7 +50,8 @@ public final class StorageWriter {
         public final List<String> successPaths = new ArrayList<String>();
         public boolean anySecondaryVolume;    // a USB/SD (secondary disk) exists
         public boolean secondaryDiskWritten;  // wrote at least one copy on it
-        public boolean onlyInternalFallback;  // no secondary -> emergency copy
+        public boolean appDataWritten;        // wrote the guaranteed Android/data copy
+        public String appDataPath;            // that copy's path
         public boolean anySuccess;
         public String primarySavedPath;       // main path to show prominently
     }
@@ -58,6 +59,24 @@ public final class StorageWriter {
     public Report writeEverywhere(String content) {
         Report r = new Report();
 
+        // 1) Guaranteed copy inside the app's own Android/data folder, under
+        //    faustimango_YT/UniversalDeviceInfo. Created on every open.
+        File appBase = ctx.getExternalFilesDir(null);
+        if (appBase == null) {
+            appBase = ctx.getFilesDir();
+        }
+        File appDest = new File(new File(appBase, APP_FOLDER), FILE_NAME);
+        if (tryWrite(appDest, content)) {
+            r.anySuccess = true;
+            r.appDataWritten = true;
+            r.appDataPath = appDest.getAbsolutePath();
+            r.successPaths.add(appDest.getAbsolutePath());
+            r.lines.add("✓ App (Android/data) -> " + appDest.getAbsolutePath());
+        } else {
+            r.lines.add("✗ No se pudo escribir en Android/data.");
+        }
+
+        // 2) Extra copies on every secondary disk (USB/SD), closest folder to root.
         List<VolumeInfo> vols = VolumeUtil.list(ctx);
         List<VolumeInfo> secondary = new ArrayList<VolumeInfo>();
         for (VolumeInfo v : vols) {
@@ -67,35 +86,26 @@ public final class StorageWriter {
             }
         }
         r.anySecondaryVolume = !secondary.isEmpty();
-
-        if (!secondary.isEmpty()) {
-            for (VolumeInfo v : secondary) {
-                writeToSecondary(r, v, content);
-            }
-        } else {
-            // No USB/SD present. Do NOT dump on the internal shared-storage root
-            // (the OS disk); keep only an emergency app-scoped copy and prompt
-            // the user to connect a secondary disk.
-            r.onlyInternalFallback = true;
-            File base = ctx.getExternalFilesDir(null);
-            if (base == null) {
-                base = ctx.getFilesDir();
-            }
-            File dest = new File(new File(base, APP_FOLDER), FILE_NAME);
-            if (tryWrite(dest, content)) {
-                r.anySuccess = true;
-                r.successPaths.add(dest.getAbsolutePath());
-                r.lines.add("⚠ No hay disco secundario (USB/SD) conectado.");
-                r.lines.add("Copia de emergencia en el interno: " + dest.getAbsolutePath());
-            }
-            r.lines.add("➡ Conectá un pendrive o tarjeta SD y tocá 'Actualizar' "
-                    + "para guardar en el disco secundario.");
+        for (VolumeInfo v : secondary) {
+            writeToSecondary(r, v, content);
         }
 
-        if (!r.successPaths.isEmpty()) {
-            r.primarySavedPath = r.successPaths.get(0);
-        }
+        r.primarySavedPath = (r.appDataPath != null) ? r.appDataPath
+                : (r.successPaths.isEmpty() ? null : r.successPaths.get(0));
         return r;
+    }
+
+    /** Writes the report into the shareable cache dir; returns its content:// URI. */
+    public android.net.Uri writeShareFile(String content) {
+        try {
+            File f = new File(ShareTxtProvider.shareDir(ctx), FILE_NAME);
+            if (!tryWrite(f, content)) {
+                return null;
+            }
+            return ShareTxtProvider.uriFor(FILE_NAME);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /**

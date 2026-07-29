@@ -1,17 +1,19 @@
 package com.universal.deviceinfo;
 
 import android.app.Activity;
-import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -24,27 +26,48 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Single-screen TV app: gathers every piece of device info it can, shows it in a
- * focusable card layout, and writes a full .txt report to the root of any
- * secondary (USB/SD) volume it can reach. Pure framework, no AndroidX, so it
- * runs from Android 4.1 to the latest release.
+ * Universal Device Info — light-themed, searchable, categorised device report.
+ * Shows everything the collector can read, saves the full .txt into the app's
+ * Android/data/.../faustimango_YT/UniversalDeviceInfo folder (and any USB/SD),
+ * and can share the .txt to any app. Pure framework, no AndroidX.
  */
 public class MainActivity extends Activity {
 
     private static final int REQ_PERM = 101;
-    private static final int REQ_TREE = 202;
-    private static final String PREFS = "udi_prefs";
-    private static final String KEY_TREE = "saf_tree_uri";
     private static final String REPORT_TITLE = "UNIVERSAL DEVICE INFO";
 
+    // Category name (chip label) followed by the section titles it includes.
+    // "Básico" and "Todo" are handled specially.
+    private static final String[][] CATS = {
+        {"Básico"},
+        {"Todo"},
+        {"CPU", "Procesador (CPU)"},
+        {"RAM", "Memoria RAM"},
+        {"GPU", "GPU / OpenGL"},
+        {"Red/WiFi", "Conectividad", "Interfaces de red", "Bluetooth", "Telefonía / SIM"},
+        {"Pantalla", "Pantalla"},
+        {"Batería", "Batería", "Térmico / Temperaturas"},
+        {"Almac.", "Almacenamiento"},
+        {"Sensores", "Sensores", "Cámaras", "Dispositivos de entrada", "Audio"},
+        {"Sistema", "Identidad del dispositivo", "Sistema Android", "Características del sistema",
+            "Propiedades del sistema", "Entorno de ejecución", "Idioma / Región / Hora",
+            "Códecs multimedia", "Aplicaciones instaladas"},
+    };
+
     private LinearLayout sectionsContainer;
+    private LinearLayout chipsRow;
+    private final List<TextView> chips = new ArrayList<TextView>();
+    private EditText searchField;
     private TextView statusView;
-    private Button btnReload;
 
     private DeviceInfoCollector collector;
     private StorageWriter writer;
 
+    private List<InfoSection> allSections = new ArrayList<InfoSection>();
+    private InfoSection saveSection;
     private volatile String lastReport;
+    private int selectedCat = 0;
+    private String query = "";
     private boolean busy;
 
     @Override
@@ -59,98 +82,104 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------------ UI
 
     private View buildUi() {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(UiBuilder.BG);
-        scroll.setFillViewport(true);
-
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        int h = UiBuilder.dp(this, 28); // overscan-safe horizontal padding for TV
-        int v = UiBuilder.dp(this, 24);
-        root.setPadding(h, v, h, v);
-        scroll.addView(root, new ScrollView.LayoutParams(
+        root.setBackgroundColor(UiBuilder.BG);
+        int h = UiBuilder.dp(this, 18);
+        root.setPadding(h, UiBuilder.dp(this, 16), h, 0);
+
+        // Title + subtitle
+        root.addView(UiBuilder.title(this, "Universal Device Info"));
+        root.addView(UiBuilder.subtitle(this, Build.MANUFACTURER + " " + Build.MODEL
+                + "  ·  Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")"));
+
+        // Action buttons
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setPadding(0, UiBuilder.dp(this, 12), 0, UiBuilder.dp(this, 12));
+        Button btnReload = UiBuilder.button(this, "↻ Actualizar", false);
+        Button btnShare = UiBuilder.button(this, "🔗 Compartir TXT", true);
+        LinearLayout.LayoutParams m = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        m.rightMargin = UiBuilder.dp(this, 10);
+        actions.addView(btnReload, m);
+        actions.addView(btnShare);
+        root.addView(actions);
+        btnReload.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { reload(); }
+        });
+        btnShare.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { shareTxt(); }
+        });
+
+        // Search field
+        searchField = UiBuilder.searchField(this);
+        root.addView(searchField, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        searchField.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) {
+                query = s.toString();
+                render();
+            }
+        });
 
-        root.addView(buildHeader());
+        // Category chips (horizontal scroll)
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        hsv.setHorizontalScrollBarEnabled(false);
+        LinearLayout.LayoutParams hsvLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hsvLp.topMargin = UiBuilder.dp(this, 12);
+        hsvLp.bottomMargin = UiBuilder.dp(this, 8);
+        root.addView(hsv, hsvLp);
+        chipsRow = new LinearLayout(this);
+        chipsRow.setOrientation(LinearLayout.HORIZONTAL);
+        hsv.addView(chipsRow);
+        for (int i = 0; i < CATS.length; i++) {
+            final int idx = i;
+            TextView chip = UiBuilder.chip(this, CATS[i][0]);
+            LinearLayout.LayoutParams cLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            cLp.rightMargin = UiBuilder.dp(this, 8);
+            chip.setLayoutParams(cLp);
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { selectCategory(idx); }
+            });
+            chips.add(chip);
+            chipsRow.addView(chip);
+        }
+        UiBuilder.styleChip(chips.get(0), true);
 
+        // Status line
+        statusView = UiBuilder.status(this);
+        statusView.setText("Cargando…");
+        root.addView(statusView);
+
+        // Scrollable content
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        LinearLayout.LayoutParams scLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        root.addView(scroll, scLp);
         sectionsContainer = new LinearLayout(this);
         sectionsContainer.setOrientation(LinearLayout.VERTICAL);
-        root.addView(sectionsContainer, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        sectionsContainer.setPadding(0, UiBuilder.dp(this, 6), 0, UiBuilder.dp(this, 16));
+        scroll.addView(sectionsContainer);
 
-        return scroll;
+        return root;
     }
 
-    private View buildHeader() {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        int pad = UiBuilder.dp(this, 18);
-        card.setPadding(pad, pad, pad, pad);
-        LinearLayout.LayoutParams cardLp = UiBuilder.cardLp(this);
-        card.setLayoutParams(cardLp);
-
-        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-        bg.setColor(0xFF101A31);
-        bg.setCornerRadius(UiBuilder.dp(this, 16));
-        bg.setStroke(Math.max(1, UiBuilder.dp(this, 1)), UiBuilder.STROKE);
-        if (Build.VERSION.SDK_INT >= 16) {
-            card.setBackground(bg);
-        } else {
-            //noinspection deprecation
-            card.setBackgroundDrawable(bg);
+    private void selectCategory(int idx) {
+        selectedCat = idx;
+        for (int i = 0; i < chips.size(); i++) {
+            UiBuilder.styleChip(chips.get(i), i == idx);
         }
-
-        card.addView(UiBuilder.title(this, "Universal Device Info"));
-        card.addView(UiBuilder.subtitle(this,
-                "Información completa del dispositivo · interfaz para TV"));
-
-        TextView summary = new TextView(this);
-        summary.setText(Build.MANUFACTURER + " " + Build.MODEL + "   •   Android "
-                + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")");
-        summary.setTextColor(UiBuilder.ACCENT_2);
-        summary.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
-        summary.setPadding(0, UiBuilder.dp(this, 8), 0, 0);
-        card.addView(summary);
-
-        // Button row (equal weights so it fits any screen width).
-        LinearLayout btns = new LinearLayout(this);
-        btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setPadding(0, UiBuilder.dp(this, 14), 0, 0);
-
-        btnReload = UiBuilder.button(this, "↻ Actualizar");
-        Button btnSave = UiBuilder.button(this, "💾 Guardar TXT");
-        Button btnSaf = UiBuilder.button(this, "📂 Carpeta USB/SD");
-
-        btns.addView(btnReload, weightLp());
-        btns.addView(btnSave, weightLp());
-        btns.addView(btnSaf, weightLp());
-        card.addView(btns);
-
-        statusView = UiBuilder.status(this);
-        statusView.setText("Iniciando…");
-        card.addView(statusView);
-
-        btnReload.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { reload(); }
-        });
-        btnSave.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { resaveOnly(); }
-        });
-        btnSaf.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { pickFolder(); }
-        });
-
-        btnReload.requestFocus();
-        return card;
-    }
-
-    private LinearLayout.LayoutParams weightLp() {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        int m = UiBuilder.dp(this, 5);
-        lp.leftMargin = m;
-        lp.rightMargin = m;
-        return lp;
+        if (searchField.getText().length() > 0) {
+            searchField.setText(""); // watcher re-renders with the new category
+        } else {
+            render();
+        }
     }
 
     // -------------------------------------------------------------- Loading
@@ -170,8 +199,6 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        // Load regardless of the outcome: the writer adapts to whatever access
-        // exists, and all the read-only info needs no permission at all.
         reload();
     }
 
@@ -180,8 +207,7 @@ public class MainActivity extends Activity {
             return;
         }
         busy = true;
-        setStatus("Recopilando información del dispositivo…");
-        sectionsContainer.removeAllViews();
+        statusView.setText("Recopilando información del dispositivo…");
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -190,30 +216,31 @@ public class MainActivity extends Activity {
                     sections = collector.collectAll();
                 } catch (Throwable t) {
                     sections = new ArrayList<InfoSection>();
-                    InfoSection err = new InfoSection("Error");
-                    err.add("Fallo", String.valueOf(t));
-                    sections.add(err);
+                    InfoSection e = new InfoSection("Error");
+                    e.add("Fallo", String.valueOf(t));
+                    sections.add(e);
                 }
                 String stamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
                 final String report = ReportBuilder.build(REPORT_TITLE, stamp, sections);
                 lastReport = report;
-
                 StorageWriter.Report wr;
                 try {
                     wr = writer.writeEverywhere(report);
                 } catch (Throwable t) {
                     wr = new StorageWriter.Report();
-                    wr.lines.add("Error al escribir: " + t);
+                    wr.lines.add("Error al guardar: " + t);
                 }
-                final String safResult = trySavedSaf(report);
-
-                final List<InfoSection> finalSections = sections;
-                final StorageWriter.Report finalWr = wr;
+                final List<InfoSection> fSections = sections;
+                final StorageWriter.Report fWr = wr;
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        render(finalSections, finalWr, safResult);
-                        toastSaved(finalWr);
+                        allSections = fSections;
+                        saveSection = buildSaveSection(fWr);
+                        render();
+                        String p = fWr.primarySavedPath;
+                        statusView.setText(p != null ? "✓ TXT guardado en: " + p
+                                : "✗ No se pudo guardar el TXT.");
                         busy = false;
                     }
                 });
@@ -221,178 +248,130 @@ public class MainActivity extends Activity {
         }, "collector").start();
     }
 
-    private void resaveOnly() {
-        if (lastReport == null) {
-            toast("Todavía se está cargando, esperá un momento…");
-            return;
-        }
-        setStatus("Guardando TXT de nuevo…");
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                final StorageWriter.Report wr = writer.writeEverywhere(lastReport);
-                final String saf = trySavedSaf(lastReport);
-                runOnUiThread(new Runnable() {
-                    @Override public void run() { showWriteStatus(wr, saf); toastSaved(wr); }
-                });
-            }
-        }, "resave").start();
-    }
-
     // -------------------------------------------------------------- Render
 
-    private void render(List<InfoSection> sections, StorageWriter.Report wr, String safResult) {
-        sectionsContainer.removeAllViews();
-        // First card: where the TXT went.
-        sectionsContainer.addView(
-                UiBuilder.sectionCard(this, buildSaveResultSection(wr, safResult)),
-                UiBuilder.cardLp(this));
-        for (InfoSection s : sections) {
-            sectionsContainer.addView(UiBuilder.sectionCard(this, s), UiBuilder.cardLp(this));
+    private void render() {
+        if (sectionsContainer == null) {
+            return;
         }
-        showWriteStatus(wr, safResult);
+        sectionsContainer.removeAllViews();
+
+        List<InfoSection> base = new ArrayList<InfoSection>();
+        if (saveSection != null) {
+            base.add(saveSection);
+        }
+        base.addAll(allSections);
+
+        String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        List<InfoSection> visible;
+        if (!q.isEmpty()) {
+            visible = Filters.search(base, q);
+        } else {
+            String name = CATS[selectedCat][0];
+            if ("Básico".equals(name)) {
+                visible = buildBasico(allSections);
+            } else if ("Todo".equals(name)) {
+                visible = base;
+            } else {
+                visible = Filters.byTitles(base, CATS[selectedCat]);
+            }
+        }
+
+        if (visible.isEmpty()) {
+            TextView t = new TextView(this);
+            t.setText(q.isEmpty() ? "Todavía cargando…" : "Sin resultados para \"" + query + "\".");
+            t.setTextColor(UiBuilder.MUTED);
+            t.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+            t.setPadding(0, UiBuilder.dp(this, 20), 0, 0);
+            sectionsContainer.addView(t);
+        } else {
+            for (InfoSection s : visible) {
+                sectionsContainer.addView(UiBuilder.sectionCard(this, s), UiBuilder.cardLp(this));
+            }
+        }
     }
 
-    private InfoSection buildSaveResultSection(StorageWriter.Report wr, String safResult) {
-        InfoSection s = new InfoSection("¿Dónde se guardó el TXT?");
+    private List<InfoSection> buildBasico(List<InfoSection> all) {
+        List<InfoSection> out = new ArrayList<InfoSection>();
+        InfoSection s = new InfoSection("Resumen básico");
+        s.addIfPresent("Fabricante", Filters.value(all, "Identidad del dispositivo", "Fabricante"));
+        s.addIfPresent("Modelo", Filters.value(all, "Identidad del dispositivo", "Modelo"));
+        s.addIfPresent("Android", Filters.value(all, "Sistema Android", "Versión Android"));
+        s.addIfPresent("CPU", Filters.value(all, "Procesador (CPU)", "Hardware (cpuinfo)"));
+        s.addIfPresent("Núcleos", Filters.value(all, "Procesador (CPU)", "Núcleos (runtime)"));
+        s.addIfPresent("Arquitectura", Filters.value(all, "Procesador (CPU)", "ABI principal"));
+        s.addIfPresent("RAM total", Filters.value(all, "Memoria RAM", "RAM total"));
+        s.addIfPresent("RAM disponible", Filters.value(all, "Memoria RAM", "RAM disponible"));
+        String gpu = Filters.value(all, "GPU / OpenGL", "GL_RENDERER");
+        if (gpu == null) {
+            gpu = Filters.value(all, "GPU / OpenGL", "Versión OpenGL");
+        }
+        s.addIfPresent("GPU", gpu);
+        String screen = Filters.value(all, "Pantalla", "Resolución (real)");
+        if (screen == null) {
+            screen = Filters.value(all, "Pantalla", "Resolución (usable)");
+        }
+        s.addIfPresent("Pantalla", screen);
+        s.addIfPresent("Almacenamiento", Filters.value(all, "Almacenamiento", "Volúmenes detectados"));
+        s.addIfPresent("Batería", Filters.value(all, "Batería", "Nivel"));
+        String wifi = Filters.value(all, "Conectividad", "SSID");
+        if (wifi == null) {
+            wifi = Filters.value(all, "Conectividad", "WiFi habilitado");
+        }
+        s.addIfPresent("WiFi", wifi);
+        String bt = Filters.value(all, "Bluetooth", "Nombre");
+        if (bt == null) {
+            bt = Filters.value(all, "Bluetooth", "Soportado");
+        }
+        s.addIfPresent("Bluetooth", bt);
+        if (s.isEmpty()) {
+            s.add("Info", "Todavía cargando…");
+        }
+        out.add(s);
+        return out;
+    }
+
+    private InfoSection buildSaveSection(StorageWriter.Report wr) {
+        InfoSection s = new InfoSection("Guardado del TXT");
+        s.add("Archivo", StorageWriter.FILE_NAME);
         if (wr.primarySavedPath != null) {
-            s.add("Archivo guardado en", wr.primarySavedPath);
-            int slash = wr.primarySavedPath.lastIndexOf('/');
-            if (slash > 0) {
-                s.add("Carpeta", wr.primarySavedPath.substring(0, slash));
-            }
-        } else {
-            s.add("Archivo guardado en", "no se pudo guardar");
+            s.add("Guardado en", wr.primarySavedPath);
         }
-        s.add("Nombre de archivo", StorageWriter.FILE_NAME);
-        s.add("Disco secundario (USB/SD) detectado", wr.anySecondaryVolume);
-        s.add("Guardado en el disco secundario", wr.secondaryDiskWritten);
-        if (wr.onlyInternalFallback) {
-            s.add("Solo copia interna (sin USB/SD)", true);
-        }
-        if (wr.successPaths.size() > 1) {
+        s.add("En Android/data", wr.appDataWritten);
+        s.add("En disco secundario (USB/SD)", wr.secondaryDiskWritten);
+        if (!wr.successPaths.isEmpty()) {
             StringBuilder b = new StringBuilder();
             for (String p : wr.successPaths) {
                 b.append(p).append('\n');
             }
-            s.add("Todas las rutas escritas", b.toString().trim());
+            s.add("Todas las rutas", b.toString().trim());
         }
-        if (!wr.lines.isEmpty()) {
-            StringBuilder b = new StringBuilder();
-            for (String l : wr.lines) {
-                b.append(l).append('\n');
-            }
-            s.add("Detalle", b.toString().trim());
-        }
-        if (safResult != null) {
-            s.add("Carpeta elegida (SAF)", safResult);
-        }
+        s.add("Compartir", "usá el botón 'Compartir TXT' para enviarlo por correo, Drive, WhatsApp, etc.");
         return s;
     }
 
-    private void showWriteStatus(StorageWriter.Report wr, String safResult) {
-        StringBuilder sb = new StringBuilder();
-        if (wr.secondaryDiskWritten && wr.primarySavedPath != null) {
-            sb.append("✓ Guardado en el disco secundario:\n").append(wr.primarySavedPath);
-        } else if (wr.onlyInternalFallback) {
-            sb.append("⚠ No hay USB/SD conectado. Copia interna de emergencia");
-            if (wr.primarySavedPath != null) {
-                sb.append(":\n").append(wr.primarySavedPath);
-            }
-            sb.append("\nConectá el disco secundario y tocá Actualizar.");
-        } else {
-            sb.append("✗ No se pudo guardar en el disco secundario.");
-        }
-        if (safResult != null) {
-            sb.append("\nSAF ✓: ").append(safResult);
-        }
-        setStatus(sb.toString());
-    }
+    // ----------------------------------------------------------------- Share
 
-    /** Toast announcing exactly where the file landed, shown on open/refresh. */
-    private void toastSaved(StorageWriter.Report wr) {
-        if (wr.primarySavedPath != null) {
-            toast("TXT guardado en:\n" + wr.primarySavedPath);
-        } else {
-            toast("No se pudo guardar el TXT. Conectá un USB/SD y tocá Actualizar.");
+    private void shareTxt() {
+        if (lastReport == null) {
+            toast("Todavía se está cargando, esperá un momento…");
+            return;
         }
-    }
-
-    private void setStatus(final String text) {
-        if (statusView != null) {
-            statusView.setText(text);
-        }
-    }
-
-    // ----------------------------------------------------------------- SAF
-
-    private void pickFolder() {
-        if (Build.VERSION.SDK_INT < 21) {
-            toast("Elegir carpeta (SAF) requiere Android 5.0+. En tu versión, la app "
-                    + "ya intenta escribir directamente en la raíz.");
+        Uri uri = writer.writeShareFile(lastReport);
+        if (uri == null) {
+            toast("No se pudo preparar el TXT para compartir.");
             return;
         }
         try {
-            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-            startActivityForResult(i, REQ_TREE);
+            Intent i = new Intent(Intent.ACTION_SEND);
+            i.setType("text/plain");
+            i.putExtra(Intent.EXTRA_STREAM, uri);
+            i.putExtra(Intent.EXTRA_SUBJECT, "Información del dispositivo - " + Build.MODEL);
+            i.putExtra(Intent.EXTRA_TEXT, "Informe generado por Universal Device Info (faustimango_YT).");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(i, "Compartir TXT"));
         } catch (Throwable t) {
-            toast("No se pudo abrir el selector de carpetas: " + t);
-        }
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_TREE && resultCode == RESULT_OK && data != null) {
-            final Uri tree = data.getData();
-            if (tree == null) {
-                return;
-            }
-            try {
-                final int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
-                if (Build.VERSION.SDK_INT >= 19) {
-                    getContentResolver().takePersistableUriPermission(tree, flags);
-                }
-            } catch (Throwable ignore) {
-            }
-            getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().putString(KEY_TREE, tree.toString()).apply();
-            setStatus("Guardando en la carpeta elegida…");
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    final String report = lastReport != null ? lastReport
-                            : ReportBuilder.build(REPORT_TITLE, new Date().toString(),
-                            collector.collectAll());
-                    final String res = StorageWriter.writeToDocumentTree(
-                            MainActivity.this, tree, report);
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            if (res != null) {
-                                setStatus("✓ Guardado en la carpeta elegida (SAF).");
-                                toast("TXT guardado en la carpeta USB/SD elegida.");
-                            } else {
-                                setStatus("✗ No se pudo escribir en la carpeta elegida.");
-                            }
-                        }
-                    });
-                }
-            }, "saf-write").start();
-        }
-    }
-
-    private String trySavedSaf(String report) {
-        try {
-            SharedPreferences p = getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            String s = p.getString(KEY_TREE, null);
-            if (s == null) {
-                return null;
-            }
-            return StorageWriter.writeToDocumentTree(this, Uri.parse(s), report);
-        } catch (Throwable t) {
-            return null;
+            toast("No hay apps para compartir: " + t);
         }
     }
 
