@@ -26,9 +26,9 @@ Al abrirla muestra *toda* la información que Android permite obtener y escribe 
 ## Descargar / Instalar
 
 - APK ya compilado y firmado (debug, instalable directo):
-  [`dist/UniversalDeviceInfo-v1.0-debug.apk`](dist/UniversalDeviceInfo-v1.0-debug.apk)
+  [`dist/UniversalDeviceInfo-v1.3-debug.apk`](dist/UniversalDeviceInfo-v1.3-debug.apk)
 - En TV: copiá el APK a un pendrive y abrilo con un explorador de archivos, o usá
-  `adb install UniversalDeviceInfo-v1.0-debug.apk`.
+  `adb install UniversalDeviceInfo-v1.3-debug.apk`.
 - Hay que permitir "orígenes desconocidos" / "instalar apps desconocidas".
 - Cada push a GitHub también compila el APK por CI (ver *Actions* → artefactos
   `UniversalDeviceInfo-debug`).
@@ -84,6 +84,13 @@ el resto):
 20. **Idioma / Región / Hora** — locale, zona horaria, uptime, arranque, charset.
 21. **Propiedades del sistema** — volcado completo de `getprop`.
 22. **Entorno** — VM, versiones Java, variables de entorno, rutas.
+23. **…y más (v1.1–v1.3):** Térmico/temperaturas, Seguridad/Root (su, SELinux, verified
+    boot, keyguard, biometría), Energía (PowerManager), DRM/Widevine (nivel de seguridad y
+    HDCP), WiFi (capacidades), Uso de datos (TrafficStats), USB conectado, Ubicación
+    (proveedores), Ajustes del sistema, Particiones, Pantallas (DisplayManager), Software
+    (WebView/Play Services/NFC), Kernel/procesos, y —con permiso— Telefonía detallada, SIMs,
+    Celdas (CellInfo), Ubicación GPS, WiFi conectado y redes cercanas, Bluetooth emparejados,
+    Cuentas (solo tipos) y estado de Permisos. **Hasta 44 secciones.**
 
 ## El `.txt` en la raíz del USB/SD (regla 2) — comportamiento honesto por versión
 
