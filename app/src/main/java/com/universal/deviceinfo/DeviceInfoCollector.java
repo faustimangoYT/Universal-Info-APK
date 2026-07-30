@@ -518,6 +518,7 @@ public final class DeviceInfoCollector {
                 s.add("Detalle GPU", "no se pudo crear contexto EGL");
             }
         }
+        s.addIfPresent("Vulkan", vulkanInfo());
         return s;
     }
 
@@ -559,6 +560,7 @@ public final class DeviceInfoCollector {
             } catch (Throwable ignore) {
             }
         }
+        s.addIfPresent("Capacidad de diseño", batteryDesignCapacityMah());
         return s;
     }
 
@@ -1937,6 +1939,53 @@ public final class DeviceInfoCollector {
             case TelephonyManager.NETWORK_TYPE_UNKNOWN: return "desconocido";
             default: return "tipo " + t;
         }
+    }
+
+    private String batteryDesignCapacityMah() {
+        try {
+            Class<?> cls = Class.forName("com.android.internal.os.PowerProfile");
+            Object pp = cls.getConstructor(Context.class).newInstance(ctx);
+            Object v = cls.getMethod("getBatteryCapacity").invoke(pp);
+            if (v instanceof Double && (Double) v > 0) {
+                return String.format(Locale.US, "%.0f mAh (diseño, aprox.)", (Double) v);
+            }
+        } catch (Throwable ignore) {
+            // Hidden-API access is blocked on newer Android; best effort only.
+        }
+        return null;
+    }
+
+    private String vulkanInfo() {
+        try {
+            PackageManager pm = ctx.getPackageManager();
+            if (Build.VERSION.SDK_INT >= 24) {
+                int level = featureVersion(pm, PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL);
+                int ver = featureVersion(pm, PackageManager.FEATURE_VULKAN_HARDWARE_VERSION);
+                if (level < 0 && ver < 0) {
+                    return "no soportado";
+                }
+                StringBuilder b = new StringBuilder("soportado");
+                if (level >= 0) b.append(" · nivel ").append(level);
+                if (ver >= 0) b.append(" · versión 0x").append(Integer.toHexString(ver));
+                return b.toString();
+            }
+            return pm.hasSystemFeature("android.hardware.vulkan.level") ? "soportado" : "no soportado";
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private int featureVersion(PackageManager pm, String name) {
+        try {
+            FeatureInfo[] fis = pm.getSystemAvailableFeatures();
+            for (FeatureInfo fi : fis) {
+                if (name.equals(fi.name)) {
+                    return fi.version;
+                }
+            }
+        } catch (Throwable ignore) {
+        }
+        return -1;
     }
 
     // ============================ HELPERS ============================

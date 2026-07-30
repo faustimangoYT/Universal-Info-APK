@@ -14,6 +14,11 @@ Al abrirla muestra *toda* la información que Android permite obtener y escribe 
   normal y en el de **Android TV** (`LEANBACK_LAUNCHER`).
 - **Compartir TXT:** botón que envía el informe por correo, Drive, WhatsApp o
   cualquier app (vía `ACTION_SEND` + un `ContentProvider` propio, sin AndroidX).
+- **Test de velocidad (v1.4):** botón a demanda que mide **descarga / subida / ping**
+  de tu internet (Cloudflare + ipify, todo por conteo de bytes) y la velocidad de
+  **lectura/escritura del almacenamiento**. Categoría **Hardware** (CPU + RAM + GPU +
+  almacenamiento juntos), **Vulkan** y **capacidad de batería (mAh)**. `SpeedTest` es
+  Java puro (`java.net`) y está unit-testeado (bench de disco verificado en sandbox).
 - **Guardado:** el `.txt` se crea al abrir en
   `Android/data/…/faustimango_YT/UniversalDeviceInfo/` y, además, en el disco
   secundario (USB/SD) si hay uno.

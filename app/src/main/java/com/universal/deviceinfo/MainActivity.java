@@ -41,6 +41,9 @@ public class MainActivity extends Activity {
     private static final String[][] CATS = {
         {"Básico"},
         {"Todo"},
+        {"Hardware", "Procesador (CPU)", "Memoria RAM", "GPU / OpenGL", "Almacenamiento",
+            "Pantalla", "Batería", "Térmico / Temperaturas"},
+        {"Velocidad", "Velocidad de internet"},
         {"CPU", "Procesador (CPU)"},
         {"RAM", "Memoria RAM"},
         {"GPU", "GPU / OpenGL"},
@@ -71,6 +74,8 @@ public class MainActivity extends Activity {
 
     private List<InfoSection> allSections = new ArrayList<InfoSection>();
     private InfoSection saveSection;
+    private volatile InfoSection speedSection;
+    private volatile boolean speedBusy;
     private volatile String lastReport;
     private int selectedCat = 0;
     private String query = "";
@@ -107,17 +112,22 @@ public class MainActivity extends Activity {
         actions.setPadding(0, UiBuilder.dp(this, 12), 0, UiBuilder.dp(this, 12));
         actionsScroll.addView(actions);
         Button btnReload = UiBuilder.button(this, "↻ Actualizar", false);
+        Button btnSpeed = UiBuilder.button(this, "⚡ Velocidad", true);
         Button btnShare = UiBuilder.button(this, "🔗 Compartir TXT", true);
         Button btnPerms = UiBuilder.button(this, "🔓 Permisos", false);
         LinearLayout.LayoutParams m = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         m.rightMargin = UiBuilder.dp(this, 10);
         actions.addView(btnReload, m);
+        actions.addView(btnSpeed, m);
         actions.addView(btnShare, m);
         actions.addView(btnPerms);
         root.addView(actionsScroll);
         btnReload.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { reload(); }
+        });
+        btnSpeed.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { runSpeedTest(); }
         });
         btnShare.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { shareTxt(); }
@@ -262,8 +272,12 @@ public class MainActivity extends Activity {
                     e.add("Fallo", String.valueOf(t));
                     sections.add(e);
                 }
+                List<InfoSection> forReport = new ArrayList<InfoSection>(sections);
+                if (speedSection != null) {
+                    forReport.add(speedSection);
+                }
                 String stamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
-                final String report = ReportBuilder.build(REPORT_TITLE, stamp, sections);
+                final String report = ReportBuilder.build(REPORT_TITLE, stamp, forReport);
                 lastReport = report;
                 StorageWriter.Report wr;
                 try {
@@ -301,6 +315,9 @@ public class MainActivity extends Activity {
         List<InfoSection> base = new ArrayList<InfoSection>();
         if (saveSection != null) {
             base.add(saveSection);
+        }
+        if (speedSection != null) {
+            base.add(speedSection);
         }
         base.addAll(allSections);
 
@@ -390,6 +407,79 @@ public class MainActivity extends Activity {
         }
         s.add("Compartir", "usá el botón 'Compartir TXT' para enviarlo por correo, Drive, WhatsApp, etc.");
         return s;
+    }
+
+    // -------------------------------------------------------- Speed test
+
+    private void runSpeedTest() {
+        if (speedBusy) {
+            return;
+        }
+        speedBusy = true;
+        statusView.setText("Midiendo velocidad… (descarga/subida, unos segundos)");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final SpeedTest.Result res = SpeedTest.runAll(getCacheDir());
+                speedSection = buildSpeedSection(res);
+                try {
+                    if (!allSections.isEmpty()) {
+                        List<InfoSection> forReport = new ArrayList<InfoSection>(allSections);
+                        forReport.add(speedSection);
+                        String stamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
+                        lastReport = ReportBuilder.build(REPORT_TITLE, stamp, forReport);
+                        writer.writeEverywhere(lastReport);
+                    }
+                } catch (Throwable ignore) {
+                }
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        selectCategoryByName("Velocidad");
+                        statusView.setText(speedSummary(res));
+                        speedBusy = false;
+                    }
+                });
+            }
+        }, "speed").start();
+    }
+
+    private InfoSection buildSpeedSection(SpeedTest.Result r) {
+        InfoSection s = new InfoSection("Velocidad de internet");
+        s.addIfPresent("IP pública", r.publicIp);
+        s.add("Ping (latencia)", r.pingMs >= 0 ? r.pingMs + " ms" : "no se pudo medir");
+        s.add("Descarga", r.downloadMbps >= 0 ? fmt(r.downloadMbps) + " Mbps" : "no se pudo medir");
+        s.add("Subida", r.uploadMbps >= 0 ? fmt(r.uploadMbps) + " Mbps" : "no se pudo medir");
+        if (r.storageWriteMBps >= 0) s.add("Almacenamiento (escritura)", fmt(r.storageWriteMBps) + " MB/s");
+        if (r.storageReadMBps >= 0) s.add("Almacenamiento (lectura)", fmt(r.storageReadMBps) + " MB/s");
+        s.add("Nota", "Test bajo demanda: descarga y sube datos de prueba (Cloudflare) para medir "
+                + "tu conexión, y mide la velocidad del almacenamiento. No envía datos personales.");
+        return s;
+    }
+
+    private String speedSummary(SpeedTest.Result r) {
+        if (r.downloadMbps < 0 && r.uploadMbps < 0) {
+            return "✗ No se pudo medir la velocidad (¿sin internet?).";
+        }
+        StringBuilder b = new StringBuilder("✓ ");
+        if (r.downloadMbps >= 0) b.append("↓ ").append(fmt(r.downloadMbps)).append(" Mbps   ");
+        if (r.uploadMbps >= 0) b.append("↑ ").append(fmt(r.uploadMbps)).append(" Mbps   ");
+        if (r.pingMs >= 0) b.append("ping ").append(r.pingMs).append(" ms");
+        return b.toString();
+    }
+
+    private static String fmt(double v) {
+        return String.format(Locale.US, "%.1f", v);
+    }
+
+    private void selectCategoryByName(String name) {
+        for (int i = 0; i < CATS.length; i++) {
+            if (CATS[i][0].equals(name)) {
+                selectCategory(i);
+                return;
+            }
+        }
+        render();
     }
 
     // ----------------------------------------------------------------- Share
