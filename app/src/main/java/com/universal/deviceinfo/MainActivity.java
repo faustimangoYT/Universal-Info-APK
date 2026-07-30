@@ -44,13 +44,16 @@ public class MainActivity extends Activity {
         {"CPU", "Procesador (CPU)"},
         {"RAM", "Memoria RAM"},
         {"GPU", "GPU / OpenGL"},
-        {"Red/WiFi", "Conectividad", "WiFi (capacidades)", "Uso de datos (desde el arranque)",
-            "Interfaces de red", "Bluetooth", "USB conectado", "Ubicación (proveedores)", "Telefonía / SIM"},
+        {"Red/WiFi", "Conectividad", "WiFi conectado (detalle)", "WiFi (capacidades)", "Redes WiFi cercanas",
+            "Uso de datos (desde el arranque)", "Interfaces de red", "Bluetooth", "Bluetooth emparejados",
+            "USB conectado", "Telefonía / SIM", "Telefonía detallada", "SIMs (SubscriptionManager)",
+            "Celdas (CellInfo)", "Ubicación (proveedores)", "Ubicación GPS"},
         {"Pantalla", "Pantalla", "Pantallas (DisplayManager)"},
         {"Batería", "Batería", "Térmico / Temperaturas", "Energía (PowerManager)"},
         {"Almac.", "Almacenamiento"},
         {"Sensores", "Sensores", "Cámaras", "Dispositivos de entrada", "Audio"},
-        {"Seguridad", "Seguridad / Root", "DRM protegido (Widevine)", "Ajustes del sistema"},
+        {"Seguridad", "Seguridad / Root", "Permisos", "DRM protegido (Widevine)", "Ajustes del sistema",
+            "Cuentas (tipos disponibles)"},
         {"Sistema", "Identidad del dispositivo", "Sistema Android", "Kernel / procesos",
             "Particiones del sistema", "Software del sistema", "Características del sistema",
             "Propiedades del sistema", "Entorno de ejecución", "Idioma / Región / Hora",
@@ -96,23 +99,31 @@ public class MainActivity extends Activity {
         root.addView(UiBuilder.subtitle(this, Build.MANUFACTURER + " " + Build.MODEL
                 + "  ·  Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")"));
 
-        // Action buttons
+        // Action buttons (in a horizontal scroller so they never clip)
+        HorizontalScrollView actionsScroll = new HorizontalScrollView(this);
+        actionsScroll.setHorizontalScrollBarEnabled(false);
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setPadding(0, UiBuilder.dp(this, 12), 0, UiBuilder.dp(this, 12));
+        actionsScroll.addView(actions);
         Button btnReload = UiBuilder.button(this, "↻ Actualizar", false);
         Button btnShare = UiBuilder.button(this, "🔗 Compartir TXT", true);
+        Button btnPerms = UiBuilder.button(this, "🔓 Permisos", false);
         LinearLayout.LayoutParams m = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         m.rightMargin = UiBuilder.dp(this, 10);
         actions.addView(btnReload, m);
-        actions.addView(btnShare);
-        root.addView(actions);
+        actions.addView(btnShare, m);
+        actions.addView(btnPerms);
+        root.addView(actionsScroll);
         btnReload.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { reload(); }
         });
         btnShare.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { shareTxt(); }
+        });
+        btnPerms.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { requestPermsAgain(); }
         });
 
         // Search field
@@ -187,16 +198,44 @@ public class MainActivity extends Activity {
 
     // -------------------------------------------------------------- Loading
 
+    private String[] wantedPermissions() {
+        List<String> p = new ArrayList<String>();
+        p.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        p.add(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+        p.add(android.Manifest.permission.READ_PHONE_STATE);
+        p.add(android.Manifest.permission.ACCESS_FINE_LOCATION);
+        p.add(android.Manifest.permission.ACCESS_COARSE_LOCATION);
+        if (Build.VERSION.SDK_INT >= 26) {
+            p.add(android.Manifest.permission.READ_PHONE_NUMBERS);
+        }
+        if (Build.VERSION.SDK_INT >= 31) {
+            p.add(android.Manifest.permission.BLUETOOTH_CONNECT);
+        }
+        return p.toArray(new String[0]);
+    }
+
     private void ensurePermissionThenLoad() {
         if (Build.VERSION.SDK_INT >= 23) {
-            String w = android.Manifest.permission.WRITE_EXTERNAL_STORAGE;
-            if (checkSelfPermission(w) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{
-                        w, android.Manifest.permission.READ_EXTERNAL_STORAGE}, REQ_PERM);
+            List<String> missing = new ArrayList<String>();
+            for (String p : wantedPermissions()) {
+                if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) {
+                    missing.add(p);
+                }
+            }
+            if (!missing.isEmpty()) {
+                requestPermissions(missing.toArray(new String[0]), REQ_PERM);
                 return;
             }
         }
         reload();
+    }
+
+    private void requestPermsAgain() {
+        if (Build.VERSION.SDK_INT >= 23) {
+            requestPermissions(wantedPermissions(), REQ_PERM);
+        } else {
+            reload();
+        }
     }
 
     @Override

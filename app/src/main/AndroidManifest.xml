@@ -19,6 +19,18 @@
         android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
 
+    <!-- ==== Extended device info (runtime-requested "dangerous" perms) ==== -->
+    <!-- Telephony: operator, SIM, network type, cell info, signal. IMEI/IMSI/
+         serial are OS-blocked for normal apps on Android 10+ (shown as such). -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
+    <!-- Location: last-known GPS, cell info, and Wi-Fi SSID/scan (targetSdk 29
+         uses the location model for Wi-Fi, not NEARBY_WIFI_DEVICES). -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Bluetooth: paired devices and adapter name on Android 12+. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
     <!-- ==== Compatibility: install on TV, phones, tablets, boxes alike ==== -->
     <!-- Nothing is truly required, so the widest set of devices can install. -->
     <uses-feature android:name="android.software.leanback" android:required="false" />

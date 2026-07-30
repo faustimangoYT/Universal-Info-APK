@@ -50,7 +50,7 @@ Pages…) y abrí el enlace en el navegador del TV box.
 
 ## Qué información muestra (regla "MÁS = MEJOR")
 
-**35 secciones** (v1.2), cada una tolerante a fallos (si un dato no está disponible, sigue con
+**44 secciones** (v1.3), cada una tolerante a fallos (si un dato no está disponible, sigue con
 el resto):
 
 1. **Identidad** — fabricante, marca, modelo, nombre en Ajustes, device, producto,
@@ -145,7 +145,7 @@ Requiere JDK 17+ y el Android SDK (build-tools 35, platform 35).
 ```
 app/src/main/java/com/universal/deviceinfo/
   MainActivity.java        # orquestación, permisos, SAF, render
-  DeviceInfoCollector.java # recolección de las 35 secciones (guardas SDK_INT)
+  DeviceInfoCollector.java # recolección de las 44 secciones (guardas SDK_INT)
   StorageWriter.java       # escritura por capas (raíz → su → app-dir) + SAF
   VolumeUtil / VolumeInfo  # enumeración de volúmenes multi-estrategia
   UiBuilder.java           # UI de TV construida en código (tarjetas con foco)

@@ -38,6 +38,15 @@ import android.os.Environment;
 import android.os.Process;
 import android.os.StatFs;
 import android.os.SystemClock;
+import android.accounts.AccountManager;
+import android.accounts.AuthenticatorDescription;
+import android.bluetooth.BluetoothDevice;
+import android.location.Location;
+import android.net.wifi.ScanResult;
+import android.telephony.CellInfo;
+import android.telephony.SignalStrength;
+import android.telephony.SubscriptionInfo;
+import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.util.DisplayMetrics;
 import android.app.KeyguardManager;
@@ -124,6 +133,15 @@ public final class DeviceInfoCollector {
         add(out, "Pantallas (DisplayManager)", 33);
         add(out, "Software del sistema", 34);
         add(out, "Kernel / procesos", 35);
+        add(out, "Telefonía detallada", 36);
+        add(out, "SIMs (SubscriptionManager)", 37);
+        add(out, "Celdas (CellInfo)", 38);
+        add(out, "Ubicación GPS", 39);
+        add(out, "WiFi conectado (detalle)", 40);
+        add(out, "Redes WiFi cercanas", 41);
+        add(out, "Bluetooth emparejados", 42);
+        add(out, "Cuentas (tipos disponibles)", 43);
+        add(out, "Permisos", 44);
         return out;
     }
 
@@ -178,6 +196,15 @@ public final class DeviceInfoCollector {
             case 33: return displays();
             case 34: return software();
             case 35: return kernelProc();
+            case 36: return telephonyDetail();
+            case 37: return subscriptions();
+            case 38: return cells();
+            case 39: return gpsLocation();
+            case 40: return wifiDetail();
+            case 41: return wifiScan();
+            case 42: return bluetoothPaired();
+            case 43: return accountTypes();
+            case 44: return permissions();
             default: return null;
         }
     }
@@ -1447,6 +1474,468 @@ public final class DeviceInfoCollector {
             case PowerManager.THERMAL_STATUS_EMERGENCY: return "emergencia";
             case PowerManager.THERMAL_STATUS_SHUTDOWN: return "apagado inminente";
             default: return "código " + st;
+        }
+    }
+
+    // ============================ 36. TELEPHONY DETAIL ============================
+    private InfoSection telephonyDetail() {
+        InfoSection s = new InfoSection("Telefonía detallada");
+        if (!hasPerm(android.Manifest.permission.READ_PHONE_STATE)) {
+            s.add("Permiso requerido", "READ_PHONE_STATE — tocá 'Permisos' y concedelo");
+            return s;
+        }
+        TelephonyManager tm = (TelephonyManager) ctx.getSystemService(Context.TELEPHONY_SERVICE);
+        if (tm == null) {
+            s.add("Telefonía", "no disponible");
+            return s;
+        }
+        try { s.addIfPresent("Versión de software radio", tm.getDeviceSoftwareVersion()); } catch (Throwable ig) { }
+        s.add("IMEI / MEID", Formats.nn(restricted(tm, 0)));
+        s.add("IMSI (subscriber)", Formats.nn(restricted(tm, 1)));
+        s.add("Serial de SIM", Formats.nn(restricted(tm, 2)));
+        try { s.addIfPresent("Número de teléfono", tm.getLine1Number()); } catch (Throwable ig) { }
+        if (Build.VERSION.SDK_INT >= 30) {
+            try { s.addIfPresent("TAC (Type Allocation Code)", tm.getTypeAllocationCode()); } catch (Throwable ig) { }
+            try { s.addIfPresent("Código de fabricante", tm.getManufacturerCode()); } catch (Throwable ig) { }
+        }
+        s.addIfPresent("Operador de red (MCC/MNC)", tm.getNetworkOperator());
+        s.addIfPresent("Nombre del operador de red", tm.getNetworkOperatorName());
+        s.addIfPresent("Operador de SIM (MCC/MNC)", tm.getSimOperator());
+        s.addIfPresent("Nombre del operador SIM", tm.getSimOperatorName());
+        s.addIfPresent("País de red", up(tm.getNetworkCountryIso()));
+        s.addIfPresent("País de SIM", up(tm.getSimCountryIso()));
+        if (Build.VERSION.SDK_INT >= 28) {
+            try {
+                CharSequence cn = tm.getSimCarrierIdName();
+                if (cn != null) s.add("Carrier ID", cn.toString());
+            } catch (Throwable ig) { }
+        }
+        s.add("Tipo de teléfono", phoneType(tm.getPhoneType()));
+        s.add("Estado de SIM", simState(tm.getSimState()));
+        s.add("Estado de datos", dataState(tm.getDataState()));
+        if (Build.VERSION.SDK_INT >= 24) {
+            try { s.add("Red de datos", networkTypeName(tm.getDataNetworkType())); } catch (Throwable ig) { }
+            try { s.add("Red de voz", networkTypeName(tm.getVoiceNetworkType())); } catch (Throwable ig) { }
+        }
+        try { s.add("En roaming", tm.isNetworkRoaming()); } catch (Throwable ig) { }
+        if (Build.VERSION.SDK_INT >= 23) {
+            try { s.add("Nº de teléfonos (SIM slots)", tm.getPhoneCount()); } catch (Throwable ig) { }
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            try { s.add("Módems activos", tm.getActiveModemCount()); } catch (Throwable ig) { }
+        }
+        try { s.add("Capaz de voz / SMS", tm.isVoiceCapable() + " / " + tm.isSmsCapable()); } catch (Throwable ig) { }
+        if (Build.VERSION.SDK_INT >= 28) {
+            try {
+                SignalStrength ss = tm.getSignalStrength();
+                if (ss != null) s.add("Nivel de señal", ss.getLevel() + "/4");
+            } catch (Throwable ig) { }
+        }
+        return s;
+    }
+
+    // ============================ 37. SUBSCRIPTIONS ============================
+    private InfoSection subscriptions() {
+        InfoSection s = new InfoSection("SIMs (SubscriptionManager)");
+        if (Build.VERSION.SDK_INT < 22) {
+            s.add("SubscriptionManager", "requiere Android 5.1+");
+            return s;
+        }
+        if (!hasPerm(android.Manifest.permission.READ_PHONE_STATE)) {
+            s.add("Permiso requerido", "READ_PHONE_STATE");
+            return s;
+        }
+        try {
+            SubscriptionManager sm = (SubscriptionManager)
+                    ctx.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+            if (sm == null) {
+                s.add("SIMs", "no disponible");
+                return s;
+            }
+            List<SubscriptionInfo> list = sm.getActiveSubscriptionInfoList();
+            if (list == null || list.isEmpty()) {
+                s.add("SIMs activas", "0");
+                return s;
+            }
+            s.add("SIMs activas", list.size());
+            int i = 0;
+            for (SubscriptionInfo si : list) {
+                i++;
+                StringBuilder b = new StringBuilder();
+                b.append("Operador: ").append(Formats.nn(si.getCarrierName())).append('\n');
+                b.append("Nombre: ").append(Formats.nn(si.getDisplayName())).append('\n');
+                b.append("Slot: ").append(si.getSimSlotIndex())
+                        .append("  ID: ").append(si.getSubscriptionId()).append('\n');
+                b.append("País: ").append(Formats.nn(si.getCountryIso()));
+                if (Build.VERSION.SDK_INT >= 29) {
+                    b.append('\n').append("MCC/MNC: ").append(Formats.nn(si.getMccString()))
+                            .append("/").append(Formats.nn(si.getMncString()));
+                }
+                if (Build.VERSION.SDK_INT >= 28) {
+                    b.append('\n').append("eSIM: ").append(si.isEmbedded() ? "sí" : "no");
+                }
+                b.append('\n').append("Data roaming: ").append(si.getDataRoaming() == 1 ? "activado" : "desactivado");
+                try {
+                    CharSequence num = si.getNumber();
+                    if (num != null && num.length() > 0) {
+                        b.append('\n').append("Número: ").append(num);
+                    }
+                } catch (Throwable ig) { }
+                s.add("SIM " + i, b.toString());
+            }
+        } catch (Throwable t) {
+            s.add("SIMs", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 38. CELLS ============================
+    private InfoSection cells() {
+        InfoSection s = new InfoSection("Celdas (CellInfo)");
+        if (!hasPerm(android.Manifest.permission.ACCESS_FINE_LOCATION)) {
+            s.add("Permiso requerido", "ACCESS_FINE_LOCATION");
+            return s;
+        }
+        try {
+            TelephonyManager tm = (TelephonyManager) ctx.getSystemService(Context.TELEPHONY_SERVICE);
+            if (tm == null) {
+                s.add("Celdas", "no disponible");
+                return s;
+            }
+            List<CellInfo> cells = tm.getAllCellInfo();
+            if (cells == null || cells.isEmpty()) {
+                s.add("Celdas", "sin información (¿sin SIM o sin señal?)");
+                return s;
+            }
+            s.add("Celdas detectadas", cells.size());
+            int i = 0;
+            for (CellInfo c : cells) {
+                i++;
+                String type = c.getClass().getSimpleName().replace("CellInfo", "");
+                String reg = c.isRegistered() ? " · registrada" : "";
+                s.add("Celda " + i + " · " + type + reg, String.valueOf(c));
+            }
+        } catch (SecurityException se) {
+            s.add("Celdas", "permiso de ubicación no concedido");
+        } catch (Throwable t) {
+            s.add("Celdas", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 39. GPS LOCATION ============================
+    private InfoSection gpsLocation() {
+        InfoSection s = new InfoSection("Ubicación GPS");
+        if (!hasPerm(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                && !hasPerm(android.Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            s.add("Permiso requerido", "ACCESS_FINE_LOCATION / COARSE");
+            return s;
+        }
+        try {
+            LocationManager lm = (LocationManager) ctx.getSystemService(Context.LOCATION_SERVICE);
+            if (lm == null) {
+                s.add("Ubicación", "no disponible");
+                return s;
+            }
+            Location best = null;
+            String[] provs = {LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER,
+                    LocationManager.PASSIVE_PROVIDER};
+            for (String p : provs) {
+                try {
+                    Location l = lm.getLastKnownLocation(p);
+                    if (l != null && (best == null || l.getTime() > best.getTime())) {
+                        best = l;
+                    }
+                } catch (Throwable ig) { }
+            }
+            if (best == null) {
+                s.add("Última ubicación", "sin fix reciente (abrí un mapa para obtener uno)");
+                return s;
+            }
+            s.add("Latitud", String.valueOf(best.getLatitude()));
+            s.add("Longitud", String.valueOf(best.getLongitude()));
+            if (best.hasAltitude()) s.add("Altitud", String.format(Locale.US, "%.1f m", best.getAltitude()));
+            if (best.hasAccuracy()) s.add("Precisión", String.format(Locale.US, "%.1f m", best.getAccuracy()));
+            if (best.hasSpeed()) s.add("Velocidad", String.format(Locale.US, "%.1f m/s", best.getSpeed()));
+            if (best.hasBearing()) s.add("Rumbo", String.format(Locale.US, "%.0f°", best.getBearing()));
+            s.add("Proveedor", Formats.nn(best.getProvider()));
+            s.add("Hora del fix", new Date(best.getTime()).toString());
+        } catch (SecurityException se) {
+            s.add("Ubicación", "permiso no concedido");
+        } catch (Throwable t) {
+            s.add("Ubicación", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 40. WIFI DETAIL ============================
+    @SuppressWarnings("deprecation")
+    private InfoSection wifiDetail() {
+        InfoSection s = new InfoSection("WiFi conectado (detalle)");
+        try {
+            WifiManager wm = (WifiManager) ctx.getSystemService(Context.WIFI_SERVICE);
+            if (wm == null) {
+                s.add("WiFi", "no disponible");
+                return s;
+            }
+            s.add("WiFi habilitado", wm.isWifiEnabled());
+            WifiInfo wi = wm.getConnectionInfo();
+            if (wi == null) {
+                s.add("WiFi", "sin conexión");
+                return s;
+            }
+            String ssid = stripQuotes(wi.getSSID());
+            if (ssid == null && !hasPerm(android.Manifest.permission.ACCESS_FINE_LOCATION)) {
+                s.add("SSID", "requiere permiso de ubicación");
+            } else {
+                s.addIfPresent("SSID", ssid);
+            }
+            s.addIfPresent("BSSID", wi.getBSSID());
+            if (wi.getLinkSpeed() > 0) s.add("Velocidad de enlace", wi.getLinkSpeed() + " Mbps");
+            if (Build.VERSION.SDK_INT >= 30) {
+                if (wi.getTxLinkSpeedMbps() > 0) s.add("Tx link speed", wi.getTxLinkSpeedMbps() + " Mbps");
+                if (wi.getRxLinkSpeedMbps() > 0) s.add("Rx link speed", wi.getRxLinkSpeedMbps() + " Mbps");
+                s.add("Estándar WiFi", wifiStandardStr(wi.getWifiStandard()));
+            }
+            s.add("RSSI", wi.getRssi() + " dBm");
+            if (Build.VERSION.SDK_INT >= 21 && wi.getFrequency() > 0) {
+                s.add("Frecuencia", wi.getFrequency() + " MHz");
+            }
+            int ip = wi.getIpAddress();
+            if (ip != 0) s.add("IP", intToIp(ip));
+            String mac = wi.getMacAddress();
+            if (mac != null && !"02:00:00:00:00:00".equals(mac)) s.add("MAC", mac);
+            s.add("SSID oculto", wi.getHiddenSSID());
+            DhcpInfo dh = wm.getDhcpInfo();
+            if (dh != null) {
+                s.addIfPresent("Gateway", dh.gateway != 0 ? intToIp(dh.gateway) : null);
+                s.addIfPresent("DNS1", dh.dns1 != 0 ? intToIp(dh.dns1) : null);
+                s.addIfPresent("DNS2", dh.dns2 != 0 ? intToIp(dh.dns2) : null);
+                s.addIfPresent("Máscara", dh.netmask != 0 ? intToIp(dh.netmask) : null);
+                if (dh.leaseDuration > 0) s.add("Lease DHCP", dh.leaseDuration + " s");
+            }
+        } catch (Throwable t) {
+            s.add("WiFi", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 41. WIFI SCAN ============================
+    private InfoSection wifiScan() {
+        InfoSection s = new InfoSection("Redes WiFi cercanas");
+        if (!hasPerm(android.Manifest.permission.ACCESS_FINE_LOCATION)) {
+            s.add("Permiso requerido", "ACCESS_FINE_LOCATION");
+            return s;
+        }
+        try {
+            WifiManager wm = (WifiManager) ctx.getSystemService(Context.WIFI_SERVICE);
+            if (wm == null) {
+                s.add("WiFi", "no disponible");
+                return s;
+            }
+            List<ScanResult> res = wm.getScanResults();
+            if (res == null || res.isEmpty()) {
+                s.add("Redes", "sin resultados (activá WiFi y ubicación)");
+                return s;
+            }
+            s.add("Redes detectadas", res.size());
+            StringBuilder b = new StringBuilder();
+            for (ScanResult r : res) {
+                b.append((r.SSID == null || r.SSID.isEmpty()) ? "(oculta)" : r.SSID)
+                        .append("  ").append(r.frequency).append("MHz  ")
+                        .append(r.level).append("dBm  ").append(secFromCaps(r.capabilities))
+                        .append("  ").append(r.BSSID).append('\n');
+            }
+            s.add("Lista", b.toString().trim());
+        } catch (SecurityException se) {
+            s.add("Redes", "permiso o ubicación no concedidos");
+        } catch (Throwable t) {
+            s.add("Redes", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 42. BLUETOOTH PAIRED ============================
+    private InfoSection bluetoothPaired() {
+        InfoSection s = new InfoSection("Bluetooth emparejados");
+        if (Build.VERSION.SDK_INT >= 31
+                && !hasPerm(android.Manifest.permission.BLUETOOTH_CONNECT)) {
+            s.add("Permiso requerido", "BLUETOOTH_CONNECT");
+            return s;
+        }
+        try {
+            BluetoothAdapter a = BluetoothAdapter.getDefaultAdapter();
+            if (a == null) {
+                s.add("Bluetooth", "no soportado");
+                return s;
+            }
+            try { s.addIfPresent("Adaptador", a.getName()); } catch (Throwable ig) { }
+            try { s.add("Habilitado", a.isEnabled()); } catch (Throwable ig) { }
+            java.util.Set<BluetoothDevice> bonded = a.getBondedDevices();
+            s.add("Emparejados", bonded != null ? bonded.size() : 0);
+            if (bonded != null) {
+                for (BluetoothDevice d : bonded) {
+                    StringBuilder b = new StringBuilder();
+                    b.append("Dirección: ").append(Formats.nn(d.getAddress()));
+                    if (Build.VERSION.SDK_INT >= 21) {
+                        b.append('\n').append("Tipo: ").append(btTypeStr(d.getType()));
+                    }
+                    b.append('\n').append("Vínculo: ").append(bondStateStr(d.getBondState()));
+                    try {
+                        if (d.getBluetoothClass() != null) {
+                            b.append('\n').append("Clase: 0x")
+                                    .append(Integer.toHexString(d.getBluetoothClass().getDeviceClass()));
+                        }
+                    } catch (Throwable ig) { }
+                    s.add(Formats.nn(d.getName()), b.toString());
+                }
+            }
+        } catch (SecurityException se) {
+            s.add("Bluetooth", "permiso no concedido");
+        } catch (Throwable t) {
+            s.add("Bluetooth", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 43. ACCOUNT TYPES ============================
+    private InfoSection accountTypes() {
+        InfoSection s = new InfoSection("Cuentas (tipos disponibles)");
+        try {
+            AccountManager am = AccountManager.get(ctx);
+            AuthenticatorDescription[] types = am.getAuthenticatorTypes();
+            s.add("Autenticadores", types.length);
+            StringBuilder b = new StringBuilder();
+            for (AuthenticatorDescription t : types) {
+                b.append(t.type).append("  (").append(t.packageName).append(")\n");
+            }
+            if (b.length() > 0) s.add("Lista", b.toString().trim());
+            s.add("Nota", "Solo los TIPOS de cuenta (Google, WhatsApp, etc.). "
+                    + "No se leen tus cuentas ni datos personales.");
+        } catch (Throwable t) {
+            s.add("Cuentas", "no disponible (" + t + ")");
+        }
+        return s;
+    }
+
+    // ============================ 44. PERMISSIONS ============================
+    private InfoSection permissions() {
+        InfoSection s = new InfoSection("Permisos");
+        String[][] p = {
+            {"Almacenamiento", android.Manifest.permission.WRITE_EXTERNAL_STORAGE},
+            {"Teléfono (READ_PHONE_STATE)", android.Manifest.permission.READ_PHONE_STATE},
+            {"Número (READ_PHONE_NUMBERS)", "android.permission.READ_PHONE_NUMBERS"},
+            {"Ubicación fina", android.Manifest.permission.ACCESS_FINE_LOCATION},
+            {"Ubicación aprox.", android.Manifest.permission.ACCESS_COARSE_LOCATION},
+            {"Bluetooth (CONNECT)", "android.permission.BLUETOOTH_CONNECT"},
+        };
+        for (String[] pr : p) {
+            s.add(pr[0], hasPerm(pr[1]) ? "concedido ✓" : "no concedido ✗");
+        }
+        s.add("Nota", "Sin estos permisos, algunas secciones muestran menos datos. "
+                + "Tocá el botón 'Permisos' para concederlos.");
+        return s;
+    }
+
+    // ---- helpers for permission-gated sections ----
+
+    private boolean hasPerm(String perm) {
+        try {
+            if (Build.VERSION.SDK_INT >= 23) {
+                return ctx.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED;
+            }
+            return ctx.getPackageManager().checkPermission(perm, ctx.getPackageName())
+                    == PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private String restricted(TelephonyManager tm, int which) {
+        try {
+            switch (which) {
+                case 0: return (Build.VERSION.SDK_INT >= 26) ? tm.getImei() : tm.getDeviceId();
+                case 1: return tm.getSubscriberId();
+                case 2: return tm.getSimSerialNumber();
+                default: return null;
+            }
+        } catch (SecurityException se) {
+            return "restringido (Android 10+, solo apps del sistema)";
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static String secFromCaps(String caps) {
+        if (caps == null) return "?";
+        if (caps.contains("WPA3")) return "WPA3";
+        if (caps.contains("WPA2")) return "WPA2";
+        if (caps.contains("WPA")) return "WPA";
+        if (caps.contains("WEP")) return "WEP";
+        return "abierta";
+    }
+
+    private static String dataState(int st) {
+        switch (st) {
+            case TelephonyManager.DATA_DISCONNECTED: return "desconectado";
+            case TelephonyManager.DATA_CONNECTING: return "conectando";
+            case TelephonyManager.DATA_CONNECTED: return "conectado";
+            case TelephonyManager.DATA_SUSPENDED: return "suspendido";
+            default: return "estado " + st;
+        }
+    }
+
+    private static String btTypeStr(int t) {
+        switch (t) {
+            case BluetoothDevice.DEVICE_TYPE_CLASSIC: return "clásico";
+            case BluetoothDevice.DEVICE_TYPE_LE: return "BLE";
+            case BluetoothDevice.DEVICE_TYPE_DUAL: return "dual";
+            default: return "desconocido";
+        }
+    }
+
+    private static String bondStateStr(int st) {
+        switch (st) {
+            case BluetoothDevice.BOND_BONDED: return "emparejado";
+            case BluetoothDevice.BOND_BONDING: return "emparejando";
+            case BluetoothDevice.BOND_NONE: return "sin emparejar";
+            default: return "estado " + st;
+        }
+    }
+
+    private static String wifiStandardStr(int std) {
+        switch (std) {
+            case ScanResult.WIFI_STANDARD_LEGACY: return "802.11 a/b/g (legacy)";
+            case ScanResult.WIFI_STANDARD_11N: return "Wi-Fi 4 (802.11n)";
+            case ScanResult.WIFI_STANDARD_11AC: return "Wi-Fi 5 (802.11ac)";
+            case ScanResult.WIFI_STANDARD_11AX: return "Wi-Fi 6 (802.11ax)";
+            case ScanResult.WIFI_STANDARD_11AD: return "802.11ad (WiGig)";
+            default: return "desconocido (" + std + ")";
+        }
+    }
+
+    private static String networkTypeName(int t) {
+        switch (t) {
+            case TelephonyManager.NETWORK_TYPE_GPRS: return "GPRS (2G)";
+            case TelephonyManager.NETWORK_TYPE_EDGE: return "EDGE (2G)";
+            case TelephonyManager.NETWORK_TYPE_UMTS: return "UMTS (3G)";
+            case TelephonyManager.NETWORK_TYPE_HSDPA: return "HSDPA (3G)";
+            case TelephonyManager.NETWORK_TYPE_HSUPA: return "HSUPA (3G)";
+            case TelephonyManager.NETWORK_TYPE_HSPA: return "HSPA (3G)";
+            case TelephonyManager.NETWORK_TYPE_HSPAP: return "HSPA+ (3G)";
+            case TelephonyManager.NETWORK_TYPE_CDMA: return "CDMA";
+            case TelephonyManager.NETWORK_TYPE_EVDO_0: return "EVDO rev.0";
+            case TelephonyManager.NETWORK_TYPE_EVDO_A: return "EVDO rev.A";
+            case TelephonyManager.NETWORK_TYPE_EVDO_B: return "EVDO rev.B";
+            case TelephonyManager.NETWORK_TYPE_1xRTT: return "1xRTT";
+            case TelephonyManager.NETWORK_TYPE_LTE: return "LTE (4G)";
+            case TelephonyManager.NETWORK_TYPE_NR: return "NR (5G)";
+            case TelephonyManager.NETWORK_TYPE_GSM: return "GSM (2G)";
+            case TelephonyManager.NETWORK_TYPE_TD_SCDMA: return "TD-SCDMA";
+            case TelephonyManager.NETWORK_TYPE_IWLAN: return "IWLAN (WiFi calling)";
+            case TelephonyManager.NETWORK_TYPE_UNKNOWN: return "desconocido";
+            default: return "tipo " + t;
         }
     }
 
